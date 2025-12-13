@@ -1,3 +1,4 @@
+#define _DEFAULT_SOURCE
 #include <pwd.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -166,19 +167,24 @@ static bool enroll_user(const char *username) {
   char *pin_confirm = ask_pin("Confirm pin: ");
   if (pin_confirm == NULL) {
     fprintf(stderr, "Failed to read PIN confirmation from user\n");
+    explicit_bzero(pin, strlen(pin));
     free(pin);
     return false;
   }
   if (strcmp(pin, pin_confirm) != 0) {
     fprintf(stderr, "PIN and confirmation do not match\n");
+    explicit_bzero(pin, strlen(pin));
     free(pin);
+    explicit_bzero(pin_confirm, strlen(pin_confirm));
     free(pin_confirm);
     return false;
   }
+  explicit_bzero(pin_confirm, strlen(pin_confirm));
   free(pin_confirm);
   printf("Pin OK\n");
 
   bool result = enroll_user_in_tpm(pin, pin_index, counter_index);
+  explicit_bzero(pin, strlen(pin));
   free(pin);
   return result;
 }
@@ -396,6 +402,7 @@ static TSS2_RC define_pin_index(ESYS_CONTEXT *ctx, TPM2_HANDLE index,
   TSS2_RC rc =
       Esys_NV_DefineSpace(ctx, ESYS_TR_RH_OWNER, ESYS_TR_PASSWORD, ESYS_TR_NONE,
                           ESYS_TR_NONE, &pin_auth, &public_info, &tmp_handle);
+  explicit_bzero(&pin_auth, sizeof(pin_auth));
   if (rc == TSS2_RC_SUCCESS && tmp_handle != ESYS_TR_NONE) {
     Esys_TR_Close(ctx, &tmp_handle);
   }

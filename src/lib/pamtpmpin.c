@@ -1,3 +1,4 @@
+#define _DEFAULT_SOURCE
 #include "pamtpmpin.h"
 
 #include <pwd.h>
@@ -29,6 +30,7 @@ int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
   uint32_t pin_index = get_nv_index(NV_PIN_INDEX_BASE, (uint32_t)uid);
   uint32_t counter_index = get_nv_index(NV_COUNTER_INDEX_BASE, (uint32_t)uid);
   int verify_res = verify_nv_pin(pin, pin_index, counter_index);
+  explicit_bzero(pin, strlen(pin));
   free(pin);
   if (verify_res == 0) {
     return PAM_SUCCESS;
@@ -294,6 +296,7 @@ int32_t verify_nv_pin(const char *pin, TPM2_HANDLE pin_index_val,
   }
 
 cleanup:
+  explicit_bzero(&pin_auth, sizeof(pin_auth));
   if (out_data != NULL) {
     Esys_Free(out_data);
   }
