@@ -110,9 +110,11 @@ TSS2_RC apply_policy_limit(ESYS_CONTEXT *ctx, ESYS_TR counter_handle,
  * Remove an NV index if it exists
  * @param ctx The ESYS context
  * @param index The NV index to remove
+ * @param owner_password The TPM owner password (optional, can be NULL)
  * @return TSS2_RC_SUCCESS on success, or error code on failure
  */
-TSS2_RC remove_nv_if_exists(ESYS_CONTEXT *ctx, TPM2_HANDLE index);
+TSS2_RC remove_nv_if_exists(ESYS_CONTEXT *ctx, TPM2_HANDLE index,
+                            const char *owner_password);
 
 /**
  * Define a counter NV index

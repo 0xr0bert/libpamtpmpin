@@ -16,9 +16,10 @@
 /**
  * Enroll a user by username
  * @param username The username to enroll
+ * @param owner_password The TPM owner password (optional, can be NULL)
  * @return 0 on success, -1 on failure
  */
-static bool enroll_user(const char *username);
+static bool enroll_user(const char *username, const char *owner_password);
 
 /**
  * Get the UID of the specified username
@@ -32,10 +33,12 @@ static int64_t get_uid(const char *username);
  * @param pin The PIN to enroll
  * @param pin_index_val The NV index for the PIN
  * @param counter_index_val The NV index for the failure counter
+ * @param owner_password The TPM owner password (optional, can be NULL)
  * @return true on success, false on failure
  */
 static bool enroll_user_in_tpm(const char *pin, TPM2_HANDLE pin_index_val,
-                               TPM2_HANDLE counter_index_val);
+                               TPM2_HANDLE counter_index_val,
+                               const char *owner_password);
 
 static char *ask_pin(const char *prompt);
 
@@ -44,11 +47,15 @@ static char *ask_pin(const char *prompt);
 int main(int argc, char **argv) {
   setenv("TSS2_LOG", "all+NONE", 0);
   if (argc < 3) {
-    printf("Usage: %s enroll <username>\n", argv[0]);
+    printf("Usage: %s enroll <username> [owner_password]\n", argv[0]);
     return 1;
   }
   if (strcmp(argv[1], "enroll") == 0) {
-    bool result = enroll_user(argv[2]);
+    const char *owner_password = NULL;
+    if (argc >= 4) {
+      owner_password = argv[3];
+    }
+    bool result = enroll_user(argv[2], owner_password);
     if (result) {
       printf("User %s enrolled successfully.\n", argv[2]);
       return 0;
@@ -62,7 +69,7 @@ int main(int argc, char **argv) {
   }
 }
 
-static bool enroll_user(const char *username) {
+static bool enroll_user(const char *username, const char *owner_password) {
   printf("enroll user: %s\n", username);
   int64_t uid = get_uid(username);
   printf("UID: %ld\n", uid);
@@ -100,7 +107,8 @@ static bool enroll_user(const char *username) {
   free(pin_confirm);
   printf("Pin OK\n");
 
-  bool result = enroll_user_in_tpm(pin, pin_index, counter_index);
+  bool result =
+      enroll_user_in_tpm(pin, pin_index, counter_index, owner_password);
   explicit_bzero(pin, strlen(pin));
   free(pin);
   return result;
@@ -140,43 +148,61 @@ static char *ask_pin(const char *prompt) {
   struct termios old_terminal;
   bool echo_disabled = false;
 
-  printf("%s", prompt);
+  while (true) {
+    printf("%s", prompt);
 
-  if (tcgetattr(STDIN_FILENO, &old_terminal) == 0) {
-    struct termios no_echo_terminal = old_terminal;
-    no_echo_terminal.c_lflag &= ~ECHO;
-    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &no_echo_terminal) == 0) {
-      echo_disabled = true;
+    if (tcgetattr(STDIN_FILENO, &old_terminal) == 0) {
+      struct termios no_echo_terminal = old_terminal;
+      no_echo_terminal.c_lflag &= ~ECHO;
+      if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &no_echo_terminal) == 0) {
+        echo_disabled = true;
+      }
     }
-  }
 
-  ssize_t read = getline(&pin, &len, stdin);
+    ssize_t read = getline(&pin, &len, stdin);
 
-  if (echo_disabled) {
-    tcsetattr(STDIN_FILENO, TCSAFLUSH, &old_terminal);
-    printf("\n");
-  }
+    if (echo_disabled) {
+      tcsetattr(STDIN_FILENO, TCSAFLUSH, &old_terminal);
+      printf("\n");
+    }
 
-  if (read == -1) {
-    free(pin);
-    return NULL;
+    if (read == -1) {
+      free(pin);
+      return NULL;
+    }
+    // Remove trailing newline
+    if (read > 0 && pin[read - 1] == '\n') {
+      pin[read - 1] = '\0';
+      read--;
+    }
+
+    if (read < 6) {
+      printf("PIN must be at least 6 characters long.\n");
+      continue;
+    }
+
+    return pin;
   }
-  // Remove trailing newline
-  if (read > 0 && pin[read - 1] == '\n') {
-    pin[read - 1] = '\0';
-  }
-  return pin;
 }
 
 // TPM -------------------------------------------------------------------------
 
 static bool enroll_user_in_tpm(const char *pin, TPM2_HANDLE pin_index_val,
-                               TPM2_HANDLE counter_index_val) {
+                               TPM2_HANDLE counter_index_val,
+                               const char *owner_password) {
   TSS2_RC rc;
   ESYS_CONTEXT *ctx = NULL;
-  TPM2B_AUTH empty_auth = {.size = 0};
+  TPM2B_AUTH owner_auth = {.size = 0};
   TPM2B_DIGEST *policy_digest = NULL;
   ESYS_TR counter_handle = ESYS_TR_NONE;
+
+  if (owner_password != NULL) {
+    owner_auth.size = strlen(owner_password);
+    if (owner_auth.size > sizeof(owner_auth.buffer)) {
+      owner_auth.size = sizeof(owner_auth.buffer);
+    }
+    memcpy(owner_auth.buffer, owner_password, owner_auth.size);
+  }
 
   rc = Esys_Initialize(&ctx, NULL, NULL);
   if (rc != TSS2_RC_SUCCESS) {
@@ -185,9 +211,9 @@ static bool enroll_user_in_tpm(const char *pin, TPM2_HANDLE pin_index_val,
   }
 
   // Clean up any previous enrollment artifacts
-  rc = remove_nv_if_exists(ctx, pin_index_val);
+  rc = remove_nv_if_exists(ctx, pin_index_val, owner_password);
   if (rc == TSS2_RC_SUCCESS) {
-    rc = remove_nv_if_exists(ctx, counter_index_val);
+    rc = remove_nv_if_exists(ctx, counter_index_val, owner_password);
   }
   if (rc != TSS2_RC_SUCCESS) {
     fprintf(stderr, "Failed to remove existing NV indexes: 0x%x\n", rc);
@@ -195,6 +221,7 @@ static bool enroll_user_in_tpm(const char *pin, TPM2_HANDLE pin_index_val,
   }
 
   // Define the counter index and load it for policy computation
+  Esys_TR_SetAuth(ctx, ESYS_TR_RH_OWNER, &owner_auth);
   rc = define_counter_index(ctx, counter_index_val);
   if (rc != TSS2_RC_SUCCESS) {
     fprintf(stderr, "Failed to define counter NV index: 0x%x\n", rc);
@@ -208,8 +235,8 @@ static bool enroll_user_in_tpm(const char *pin, TPM2_HANDLE pin_index_val,
     goto cleanup;
   }
 
-  Esys_TR_SetAuth(ctx, ESYS_TR_RH_OWNER, &empty_auth);
-  Esys_TR_SetAuth(ctx, counter_handle, &empty_auth);
+  Esys_TR_SetAuth(ctx, ESYS_TR_RH_OWNER, &owner_auth);
+  Esys_TR_SetAuth(ctx, counter_handle, &owner_auth);
 
   rc = write_counter_value(ctx, counter_handle, 0);
   if (rc != TSS2_RC_SUCCESS) {
@@ -223,12 +250,14 @@ static bool enroll_user_in_tpm(const char *pin, TPM2_HANDLE pin_index_val,
     goto cleanup;
   }
 
+  Esys_TR_SetAuth(ctx, ESYS_TR_RH_OWNER, &owner_auth);
   rc = define_pin_index(ctx, pin_index_val, policy_digest, pin);
   if (rc != TSS2_RC_SUCCESS) {
     fprintf(stderr, "Failed to define PIN NV index: 0x%x\n", rc);
     goto cleanup;
   }
 
+  Esys_TR_SetAuth(ctx, ESYS_TR_RH_OWNER, &owner_auth);
   rc = write_pin_placeholder(ctx, pin_index_val);
   if (rc != TSS2_RC_SUCCESS) {
     fprintf(stderr, "Failed to initialize PIN NV data: 0x%x\n", rc);

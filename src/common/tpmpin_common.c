@@ -78,7 +78,8 @@ TSS2_RC apply_policy_limit(ESYS_CONTEXT *ctx, ESYS_TR counter_handle,
                        0, TPM2_EO_UNSIGNED_LT);
 }
 
-TSS2_RC remove_nv_if_exists(ESYS_CONTEXT *ctx, TPM2_HANDLE index) {
+TSS2_RC remove_nv_if_exists(ESYS_CONTEXT *ctx, TPM2_HANDLE index,
+                            const char *owner_password) {
   // Get the handle for the NV index
   ESYS_TR nv_handle = ESYS_TR_NONE;
   TSS2_RC rc = Esys_TR_FromTPMPublic(ctx, index, ESYS_TR_NONE, ESYS_TR_NONE,
@@ -93,9 +94,15 @@ TSS2_RC remove_nv_if_exists(ESYS_CONTEXT *ctx, TPM2_HANDLE index) {
 
   // If found, undefine the NV space
   if (rc == TSS2_RC_SUCCESS) {
-    // TODO: Allow owner auth to be set
-    TPM2B_AUTH empty_auth = {.size = 0};
-    Esys_TR_SetAuth(ctx, ESYS_TR_RH_OWNER, &empty_auth);
+    TPM2B_AUTH auth = {.size = 0};
+    if (owner_password != NULL) {
+      auth.size = strlen(owner_password);
+      if (auth.size > sizeof(auth.buffer)) {
+        auth.size = sizeof(auth.buffer);
+      }
+      memcpy(auth.buffer, owner_password, auth.size);
+    }
+    Esys_TR_SetAuth(ctx, ESYS_TR_RH_OWNER, &auth);
     rc = Esys_NV_UndefineSpace(ctx, ESYS_TR_RH_OWNER, nv_handle,
                                ESYS_TR_PASSWORD, ESYS_TR_NONE, ESYS_TR_NONE);
     if (rc == TSS2_RC_SUCCESS) {
