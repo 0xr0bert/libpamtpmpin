@@ -15,9 +15,9 @@ jobs:
         DEBIAN_NONINTERACTIVE=1 sudo apt-get update -y
         DEBIAN_NONINTERACTIVE=1 sudo apt-get install -y meson ninja-build libtss2-dev libpam-dev
     - uses: actions/checkout@v4
-    - name: setup builddir
+    - name: setup build
       run: meson setup build
     - name: build
       run: |
-        cd builddir
+        cd build
         ninja
