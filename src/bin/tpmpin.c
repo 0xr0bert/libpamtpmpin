@@ -1,11 +1,12 @@
-#include "tss2_common.h"
-#include "tss2_esys.h"
-#include "tss2_tpm2_types.h"
 #include <pwd.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <termios.h>
+#include <tss2_common.h>
+#include <tss2_esys.h>
+#include <tss2_tpm2_types.h>
 #include <unistd.h>
 
 // Constants -------------------------------------------------------------------
@@ -107,7 +108,7 @@ static TSS2_RC define_pin_index(ESYS_CONTEXT *ctx, TPM2_HANDLE index,
                                 const TPM2B_DIGEST *policy_digest,
                                 const char *pin);
 
-static char *ask_pin();
+static char *ask_pin(const char *prompt);
 
 // Inlines ---------------------------------------------------------------------
 
@@ -129,7 +130,14 @@ int main(int argc, char **argv) {
     return 1;
   }
   if (strcmp(argv[1], "enroll") == 0) {
-    return enroll_user(argv[2]);
+    bool result = enroll_user(argv[2]);
+    if (result) {
+      printf("User %s enrolled successfully.\n", argv[2]);
+      return 0;
+    } else {
+      printf("Failed to enroll user %s.\n", argv[2]);
+      return 1;
+    }
   } else {
     printf("Unknown command: %s\n", argv[1]);
     return 1;
@@ -149,11 +157,26 @@ static bool enroll_user(const char *username) {
   TPM2_HANDLE counter_index =
       get_nv_index(NV_COUNTER_INDEX_BASE, (uint32_t)uid);
 
-  char *pin = ask_pin();
+  char *pin = ask_pin("Enter pin: ");
   if (pin == NULL) {
     fprintf(stderr, "Failed to read PIN from user\n");
     return false;
   }
+
+  char *pin_confirm = ask_pin("Confirm pin: ");
+  if (pin_confirm == NULL) {
+    fprintf(stderr, "Failed to read PIN confirmation from user\n");
+    free(pin);
+    return false;
+  }
+  if (strcmp(pin, pin_confirm) != 0) {
+    fprintf(stderr, "PIN and confirmation do not match\n");
+    free(pin);
+    free(pin_confirm);
+    return false;
+  }
+  free(pin_confirm);
+  printf("Pin OK\n");
 
   bool result = enroll_user_in_tpm(pin, pin_index, counter_index) == 0;
   free(pin);
@@ -188,11 +211,29 @@ static int64_t get_uid(const char *username) {
   return uid;
 }
 
-static char *ask_pin() {
+static char *ask_pin(const char *prompt) {
   char *pin = NULL;
   size_t len = 0;
-  printf("Enter PIN: ");
+  struct termios old_terminal;
+  bool echo_disabled = false;
+
+  printf("%s", prompt);
+
+  if (tcgetattr(STDIN_FILENO, &old_terminal) == 0) {
+    struct termios no_echo_terminal = old_terminal;
+    no_echo_terminal.c_lflag &= ~ECHO;
+    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &no_echo_terminal) == 0) {
+      echo_disabled = true;
+    }
+  }
+
   ssize_t read = getline(&pin, &len, stdin);
+
+  if (echo_disabled) {
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &old_terminal);
+    printf("\n");
+  }
+
   if (read == -1) {
     free(pin);
     return NULL;
