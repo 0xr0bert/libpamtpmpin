@@ -42,12 +42,13 @@ sudo meson install -C build
 Before using the PAM module, the user must be enrolled in the TPM. This provisions the necessary NV (Non-Volatile) indexes.
 
 ```bash
-# Syntax: tpmpin enroll <username> [owner_password] [options]
+# Syntax: tpmpin enroll <username> [options]
 sudo tpmpin enroll myuser
 ```
 
 *   You will be prompted to set a PIN.
 *   **Options**:
+    *   `--ask-password`: Prompt for the TPM owner password securely.
     *   `--max-tries <N>`: Set the maximum number of failed attempts (default: 5).
     *   `--base <hex>`: Specify the starting NV index (advanced usage).
 
@@ -93,7 +94,8 @@ With `sufficient`, if the PIN is correct, sudo is granted. If the PIN is incorre
 If a user exceeds the maximum number of tries, their PIN is locked. To unblock them, the TPM Owner password is required (if set) or the operation must be done by root/owner.
 
 ```bash
-sudo tpmpin unblock myuser
+# Syntax: tpmpin unblock <username> [options]
+sudo tpmpin unblock myuser --ask-password
 ```
 
 ## Security Model

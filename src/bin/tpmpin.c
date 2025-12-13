@@ -63,6 +63,8 @@ static bool unblock_user(const char *username, const char *owner_password,
 static bool unblock_user_in_tpm(TPM2_HANDLE counter_index_val,
                                 const char *owner_password);
 
+static char *ask_password(const char *prompt);
+
 static char *ask_pin(const char *prompt);
 
 // Main ------------------------------------------------------------------------
@@ -72,14 +74,15 @@ int main(int argc, char **argv) {
   if (argc < 3) {
     printf("Usage: %s <command> <username> [options]\n", argv[0]);
     printf("Commands:\n");
-    printf("  enroll <username> [owner_password] [--base <hex>] [--max-tries "
+    printf("  enroll <username> [--ask-password] [--base <hex>] [--max-tries "
            "<number>]\n");
-    printf("  unblock <username> [owner_password] [--base <hex>]\n");
+    printf("  unblock <username> [--ask-password] [--base <hex>]\n");
     return 1;
   }
   if (strcmp(argv[1], "enroll") == 0) {
     const char *username = NULL;
-    const char *owner_password = NULL;
+    char *owner_password = NULL;
+    bool ask_pass = false;
     uint32_t base = NV_PIN_INDEX_BASE;
     uint64_t max_tries = MAX_PIN_FAILURES;
 
@@ -98,21 +101,35 @@ int main(int argc, char **argv) {
           fprintf(stderr, "--max-tries requires an argument\n");
           return 1;
         }
+      } else if (strcmp(argv[i], "--ask-password") == 0) {
+        ask_pass = true;
       } else if (username == NULL) {
         username = argv[i];
-      } else if (owner_password == NULL) {
-        owner_password = argv[i];
       }
     }
 
     if (username == NULL) {
-      printf("Usage: %s enroll <username> [owner_password] [--base <hex>] "
+      printf("Usage: %s enroll <username> [--ask-password] [--base <hex>] "
              "[--max-tries <number>]\n",
              argv[0]);
       return 1;
     }
 
+    if (ask_pass) {
+      owner_password = ask_password("Enter owner password: ");
+      if (owner_password == NULL) {
+        fprintf(stderr, "Failed to read owner password\n");
+        return 1;
+      }
+    }
+
     bool result = enroll_user(username, owner_password, base, max_tries);
+
+    if (owner_password) {
+      explicit_bzero(owner_password, strlen(owner_password));
+      free(owner_password);
+    }
+
     if (result) {
       printf("User %s enrolled successfully.\n", username);
       return 0;
@@ -122,7 +139,8 @@ int main(int argc, char **argv) {
     }
   } else if (strcmp(argv[1], "unblock") == 0) {
     const char *username = NULL;
-    const char *owner_password = NULL;
+    char *owner_password = NULL;
+    bool ask_pass = false;
     uint32_t base = NV_PIN_INDEX_BASE;
 
     for (int i = 2; i < argc; ++i) {
@@ -133,20 +151,34 @@ int main(int argc, char **argv) {
           fprintf(stderr, "--base requires an argument\n");
           return 1;
         }
+      } else if (strcmp(argv[i], "--ask-password") == 0) {
+        ask_pass = true;
       } else if (username == NULL) {
         username = argv[i];
-      } else if (owner_password == NULL) {
-        owner_password = argv[i];
       }
     }
 
     if (username == NULL) {
-      printf("Usage: %s unblock <username> [owner_password] [--base <hex>]\n",
+      printf("Usage: %s unblock <username> [--ask-password] [--base <hex>]\n",
              argv[0]);
       return 1;
     }
 
+    if (ask_pass) {
+      owner_password = ask_password("Enter owner password: ");
+      if (owner_password == NULL) {
+        fprintf(stderr, "Failed to read owner password\n");
+        return 1;
+      }
+    }
+
     bool result = unblock_user(username, owner_password, base);
+
+    if (owner_password) {
+      explicit_bzero(owner_password, strlen(owner_password));
+      free(owner_password);
+    }
+
     if (result) {
       printf("User %s unblocked successfully.\n", username);
       return 0;
@@ -234,42 +266,56 @@ static int64_t get_uid(const char *username) {
   return uid;
 }
 
-static char *ask_pin(const char *prompt) {
-  char *pin = NULL;
+static char *ask_password(const char *prompt) {
+  char *password = NULL;
   size_t len = 0;
   struct termios old_terminal;
   bool echo_disabled = false;
 
+  printf("%s", prompt);
+  fflush(stdout);
+
+  if (tcgetattr(STDIN_FILENO, &old_terminal) == 0) {
+    struct termios no_echo_terminal = old_terminal;
+    no_echo_terminal.c_lflag &= ~ECHO;
+    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &no_echo_terminal) == 0) {
+      echo_disabled = true;
+    }
+  }
+
+  ssize_t read = getline(&password, &len, stdin);
+
+  if (echo_disabled) {
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &old_terminal);
+    printf("\n");
+  }
+
+  if (read == -1) {
+    free(password);
+    return NULL;
+  }
+  // Remove trailing newline
+  if (read > 0 && password[read - 1] == '\n') {
+    password[read - 1] = '\0';
+    read--;
+  }
+
+  return password;
+}
+
+static char *ask_pin(const char *prompt) {
+  char *pin = NULL;
+
   while (true) {
-    printf("%s", prompt);
-
-    if (tcgetattr(STDIN_FILENO, &old_terminal) == 0) {
-      struct termios no_echo_terminal = old_terminal;
-      no_echo_terminal.c_lflag &= ~ECHO;
-      if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &no_echo_terminal) == 0) {
-        echo_disabled = true;
-      }
-    }
-
-    ssize_t read = getline(&pin, &len, stdin);
-
-    if (echo_disabled) {
-      tcsetattr(STDIN_FILENO, TCSAFLUSH, &old_terminal);
-      printf("\n");
-    }
-
-    if (read == -1) {
-      free(pin);
+    pin = ask_password(prompt);
+    if (pin == NULL) {
       return NULL;
     }
-    // Remove trailing newline
-    if (read > 0 && pin[read - 1] == '\n') {
-      pin[read - 1] = '\0';
-      read--;
-    }
 
-    if (read < 6) {
+    if (strlen(pin) < 6) {
       printf("PIN must be at least 6 characters long.\n");
+      explicit_bzero(pin, strlen(pin));
+      free(pin);
       continue;
     }
 
