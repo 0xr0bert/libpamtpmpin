@@ -13,7 +13,7 @@ jobs:
     - name: install-dependencies
       run: |
         DEBIAN_NONINTERACTIVE=1 sudo apt-get update -y
-        DEBIAN_NONINTERACTIVE=1 sudo apt-get install -y meson ninja libtss2-dev libpam-dev
+        DEBIAN_NONINTERACTIVE=1 sudo apt-get install -y meson ninja-build libtss2-dev libpam-dev
     - uses: actions/checkout@v4
     - name: setup builddir
       run: meson setup build
