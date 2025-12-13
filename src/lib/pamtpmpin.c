@@ -3,16 +3,40 @@
 
 #include <pwd.h>
 #include <security/_pam_types.h>
+#include <security/pam_appl.h>
+#include <security/pam_ext.h>
+#include <stdarg.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <syslog.h>
+#include <tss2/tss2_common.h>
 #include <tss2/tss2_esys.h>
 #include <tss2/tss2_rc.h>
 #include <tss2/tss2_tpm2_types.h>
 #include <unistd.h>
+
+// Add a small error logging helper that uses pam_syslog when available
+static void log_error(pam_handle_t *pamh, const char *fmt, ...) {
+  char buf[1024];
+  va_list ap;
+  va_start(ap, fmt);
+  vsnprintf(buf, sizeof(buf), fmt, ap);
+  va_end(ap);
+
+  if (pamh != NULL) {
+    char *response = NULL;
+    pam_prompt(pamh, PAM_ERROR_MSG, &response, "%s", buf);
+    if (response != NULL) {
+      free(response);
+    }
+  } else {
+    fprintf(stderr, "Error: %s\n", buf);
+  }
+}
 
 // PAM Module ------------------------------------------------------------------
 int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
@@ -29,13 +53,15 @@ int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
 
   uint32_t pin_index = get_nv_index(NV_PIN_INDEX_BASE, (uint32_t)uid);
   uint32_t counter_index = get_nv_index(NV_COUNTER_INDEX_BASE, (uint32_t)uid);
-  int verify_res = verify_nv_pin(pin, pin_index, counter_index);
+  int verify_res = verify_nv_pin(pamh, pin, pin_index, counter_index);
   explicit_bzero(pin, strlen(pin));
   free(pin);
   if (verify_res == 0) {
     return PAM_SUCCESS;
   } else if (verify_res == 1) {
     return PAM_AUTH_ERR;
+  } else if (verify_res == 2) {
+    return PAM_MAXTRIES;
   } else {
     return PAM_SYSTEM_ERR;
   }
@@ -141,7 +167,8 @@ static bool rc_is_bad_auth(TSS2_RC rc) {
 }
 
 static bool rc_is_policy_fail(TSS2_RC rc) {
-  return (rc & ~TPM2_RC_N_MASK) == TPM2_RC_POLICY_FAIL;
+  // Failed counters have TPM2_RC_POLICY
+  return (rc & 0xFFF) == TPM2_RC_POLICY;
 }
 
 static TSS2_RC read_counter_value(ESYS_CONTEXT *ctx, ESYS_TR counter_handle,
@@ -196,7 +223,8 @@ static TSS2_RC apply_policy_limit(ESYS_CONTEXT *ctx, ESYS_TR counter_handle,
                        0, TPM2_EO_UNSIGNED_LT);
 }
 
-int32_t verify_nv_pin(const char *pin, TPM2_HANDLE pin_index_val,
+int32_t verify_nv_pin(pam_handle_t *pamh, const char *pin,
+                      TPM2_HANDLE pin_index_val,
                       TPM2_HANDLE counter_index_val) {
   TSS2_RC rc;
   ESYS_CONTEXT *ctx = NULL;
@@ -210,23 +238,23 @@ int32_t verify_nv_pin(const char *pin, TPM2_HANDLE pin_index_val,
 
   rc = Esys_Initialize(&ctx, NULL, NULL);
   if (rc != TSS2_RC_SUCCESS) {
-    fprintf(stderr, "Failed to initialize ESYS context: 0x%x\n", rc);
+    log_error(pamh, "Failed to initialize ESYS context: 0x%x", rc);
     return -1;
   }
 
   rc = Esys_TR_FromTPMPublic(ctx, pin_index_val, ESYS_TR_NONE, ESYS_TR_NONE,
                              ESYS_TR_NONE, &pin_handle);
   if (rc != TSS2_RC_SUCCESS) {
-    fprintf(stderr, "Failed to load PIN NV index 0x%x (rc=0x%x)\n",
-            pin_index_val, rc);
+    log_error(pamh, "Failed to load PIN NV index 0x%x (rc=0x%x)", pin_index_val,
+              rc);
     goto cleanup;
   }
 
   rc = Esys_TR_FromTPMPublic(ctx, counter_index_val, ESYS_TR_NONE, ESYS_TR_NONE,
                              ESYS_TR_NONE, &counter_handle);
   if (rc != TSS2_RC_SUCCESS) {
-    fprintf(stderr, "Failed to load counter NV index 0x%x (rc=0x%x)\n",
-            counter_index_val, rc);
+    log_error(pamh, "Failed to load counter NV index 0x%x (rc=0x%x)",
+              counter_index_val, rc);
     goto cleanup;
   }
 
@@ -243,17 +271,17 @@ int32_t verify_nv_pin(const char *pin, TPM2_HANDLE pin_index_val,
                              ESYS_TR_NONE, ESYS_TR_NONE, NULL, TPM2_SE_POLICY,
                              &symmetric, TPM2_ALG_SHA256, &policy_session);
   if (rc != TSS2_RC_SUCCESS) {
-    fprintf(stderr, "Failed to start policy session: 0x%x\n", rc);
+    log_error(pamh, "Failed to start policy session: 0x%x", rc);
     goto cleanup;
   }
 
   rc = apply_policy_limit(ctx, counter_handle, policy_session);
   if (rc != TSS2_RC_SUCCESS) {
     if (rc_is_policy_fail(rc)) {
-      fprintf(stderr, "User is locked due to too many failures\n");
-      result = 1;
+      log_error(pamh, "User is locked due to too many failures");
+      result = 2;
     } else {
-      fprintf(stderr, "PolicyNV failed: 0x%x\n", rc);
+      log_error(pamh, "PolicyNV failed: 0x%x", rc);
     }
     goto cleanup;
   }
@@ -261,14 +289,13 @@ int32_t verify_nv_pin(const char *pin, TPM2_HANDLE pin_index_val,
   rc = Esys_PolicyAuthValue(ctx, policy_session, ESYS_TR_NONE, ESYS_TR_NONE,
                             ESYS_TR_NONE);
   if (rc != TSS2_RC_SUCCESS) {
-    fprintf(stderr, "PolicyAuthValue failed: 0x%x\n", rc);
+    log_error(pamh, "PolicyAuthValue failed: 0x%x", rc);
     goto cleanup;
   }
 
   size_t pin_len = strlen(pin);
   if (pin_len > sizeof(pin_auth.buffer)) {
-    fprintf(stderr, "PIN is too long (max %lu bytes)\n",
-            sizeof(pin_auth.buffer));
+    log_error(pamh, "PIN is too long (max %lu bytes)", sizeof(pin_auth.buffer));
     goto cleanup;
   }
   pin_auth.size = (uint16_t)pin_len;
@@ -276,7 +303,7 @@ int32_t verify_nv_pin(const char *pin, TPM2_HANDLE pin_index_val,
 
   rc = Esys_TR_SetAuth(ctx, pin_handle, &pin_auth);
   if (rc != TSS2_RC_SUCCESS) {
-    fprintf(stderr, "Failed to set PIN auth value: 0x%x\n", rc);
+    log_error(pamh, "Failed to set PIN auth value: 0x%x", rc);
     goto cleanup;
   }
 
@@ -290,9 +317,10 @@ int32_t verify_nv_pin(const char *pin, TPM2_HANDLE pin_index_val,
     increment_counter(ctx, counter_handle);
     result = 1;
   } else if (rc_is_policy_fail(rc)) {
-    result = 1;
+    log_error(pamh, "User is locked due to too many failures");
+    result = 2;
   } else {
-    fprintf(stderr, "NV Read failed with error code: 0x%x\n", rc);
+    log_error(pamh, "NV Read failed with error code: 0x%x", rc);
   }
 
 cleanup:

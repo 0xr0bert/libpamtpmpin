@@ -56,7 +56,7 @@ char *ask_user(pam_handle_t *pamh, char *prompt);
  */
 uint32_t get_nv_index(uint32_t mask, uint32_t uid);
 
-int32_t verify_nv_pin(const char *pin, TPM2_HANDLE pin_index_val,
-                      TPM2_HANDLE counter_index_val);
+int32_t verify_nv_pin(pam_handle_t *pamh, const char *pin,
+                      TPM2_HANDLE pin_index_val, TPM2_HANDLE counter_index_val);
 
 #endif // PAMTPMPIN_H
