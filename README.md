@@ -37,7 +37,7 @@ sudo meson install -C build
 
 ## Configuration
 
-### 1. Enroll a User
+### 1. Enrol a User
 
 Before using the PAM module, the user must be enrolled in the TPM. This provisions the necessary NV (Non-Volatile) indexes.
 
