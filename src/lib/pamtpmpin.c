@@ -301,10 +301,10 @@ cleanup:
     Esys_FlushContext(ctx, policy_session);
   }
   if (pin_handle != ESYS_TR_NONE) {
-    Esys_FlushContext(ctx, pin_handle);
+    Esys_TR_Close(ctx, &pin_handle);
   }
   if (counter_handle != ESYS_TR_NONE) {
-    Esys_FlushContext(ctx, counter_handle);
+    Esys_TR_Close(ctx, &counter_handle);
   }
   if (ctx != NULL) {
     Esys_Finalize(&ctx);
