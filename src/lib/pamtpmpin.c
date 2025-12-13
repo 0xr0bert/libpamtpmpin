@@ -53,8 +53,16 @@ int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
     return PAM_AUTH_ERR;
   }
 
-  uint32_t pin_index = get_nv_index(NV_PIN_INDEX_BASE, (uint32_t)uid);
-  uint32_t counter_index = get_nv_index(NV_COUNTER_INDEX_BASE, (uint32_t)uid);
+  uint32_t pin_base = NV_PIN_INDEX_BASE;
+  for (int i = 0; i < argc; ++i) {
+    if (strncmp(argv[i], "base=", 5) == 0) {
+      pin_base = (uint32_t)strtoul(argv[i] + 5, NULL, 0);
+    }
+  }
+  uint32_t counter_base = pin_base + (NV_COUNTER_INDEX_BASE - NV_PIN_INDEX_BASE);
+
+  uint32_t pin_index = calculate_nv_index(pin_base, (uint32_t)uid);
+  uint32_t counter_index = calculate_nv_index(counter_base, (uint32_t)uid);
   int verify_res = verify_nv_pin(pamh, pin, pin_index, counter_index);
   explicit_bzero(pin, strlen(pin));
   free(pin);

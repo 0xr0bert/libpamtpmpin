@@ -2,6 +2,17 @@
 #include "tpmpin_common.h"
 #include <string.h>
 
+uint32_t calculate_nv_index(uint32_t base, uint32_t uid) {
+  // FNV-1a 32-bit hash
+  uint32_t hash = 2166136261u;
+  uint8_t *data = (uint8_t *)&uid;
+  for (size_t i = 0; i < sizeof(uid); ++i) {
+    hash ^= data[i];
+    hash *= 16777619u;
+  }
+  return base + (hash % NV_INDEX_RANGE);
+}
+
 void encode_u64_be(uint64_t value, uint8_t *buffer, size_t size) {
   for (size_t i = 0; i < size; ++i) {
     buffer[size - 1 - i] = (uint8_t)(value & 0xFF);

@@ -12,6 +12,7 @@
 
 #define NV_PIN_INDEX_BASE 0x01500000
 #define NV_COUNTER_INDEX_BASE 0x01600000
+#define NV_INDEX_RANGE 0x000FFFFF
 #define PIN_NV_DATA_SIZE 32
 #define COUNTER_NV_DATA_SIZE 8
 #define MAX_PIN_FAILURES 5
@@ -19,14 +20,12 @@
 // Inlines ---------------------------------------------------------------------
 
 /**
- * Compute the NV Index for a given UID
- * @param mask The NV index base mask
+ * Compute the NV Index for a given UID using a hash
+ * @param base The NV index base
  * @param uid The user ID
- * @return The computed NV index, mask ORed with the UID
+ * @return The computed NV index
  */
-static inline uint32_t get_nv_index(uint32_t mask, uint32_t uid) {
-  return uid | mask;
-}
+uint32_t calculate_nv_index(uint32_t base, uint32_t uid);
 
 // Functions -------------------------------------------------------------------
 

@@ -17,9 +17,11 @@
  * Enroll a user by username
  * @param username The username to enroll
  * @param owner_password The TPM owner password (optional, can be NULL)
+ * @param base The NV index base
  * @return 0 on success, -1 on failure
  */
-static bool enroll_user(const char *username, const char *owner_password);
+static bool enroll_user(const char *username, const char *owner_password,
+                        uint32_t base);
 
 /**
  * Get the UID of the specified username
@@ -47,20 +49,42 @@ static char *ask_pin(const char *prompt);
 int main(int argc, char **argv) {
   setenv("TSS2_LOG", "all+NONE", 0);
   if (argc < 3) {
-    printf("Usage: %s enroll <username> [owner_password]\n", argv[0]);
+    printf("Usage: %s enroll <username> [owner_password] [--base <hex>]\n",
+           argv[0]);
     return 1;
   }
   if (strcmp(argv[1], "enroll") == 0) {
+    const char *username = NULL;
     const char *owner_password = NULL;
-    if (argc >= 4) {
-      owner_password = argv[3];
+    uint32_t base = NV_PIN_INDEX_BASE;
+
+    for (int i = 2; i < argc; ++i) {
+      if (strcmp(argv[i], "--base") == 0) {
+        if (i + 1 < argc) {
+          base = (uint32_t)strtoul(argv[++i], NULL, 0);
+        } else {
+          fprintf(stderr, "--base requires an argument\n");
+          return 1;
+        }
+      } else if (username == NULL) {
+        username = argv[i];
+      } else if (owner_password == NULL) {
+        owner_password = argv[i];
+      }
     }
-    bool result = enroll_user(argv[2], owner_password);
+
+    if (username == NULL) {
+      printf("Usage: %s enroll <username> [owner_password] [--base <hex>]\n",
+             argv[0]);
+      return 1;
+    }
+
+    bool result = enroll_user(username, owner_password, base);
     if (result) {
-      printf("User %s enrolled successfully.\n", argv[2]);
+      printf("User %s enrolled successfully.\n", username);
       return 0;
     } else {
-      printf("Failed to enroll user %s.\n", argv[2]);
+      printf("Failed to enroll user %s.\n", username);
       return 1;
     }
   } else {
@@ -69,7 +93,8 @@ int main(int argc, char **argv) {
   }
 }
 
-static bool enroll_user(const char *username, const char *owner_password) {
+static bool enroll_user(const char *username, const char *owner_password,
+                        uint32_t base) {
   printf("enroll user: %s\n", username);
   int64_t uid = get_uid(username);
   printf("UID: %ld\n", uid);
@@ -78,9 +103,9 @@ static bool enroll_user(const char *username, const char *owner_password) {
     return false;
   }
 
-  TPM2_HANDLE pin_index = get_nv_index(NV_PIN_INDEX_BASE, (uint32_t)uid);
-  TPM2_HANDLE counter_index =
-      get_nv_index(NV_COUNTER_INDEX_BASE, (uint32_t)uid);
+  uint32_t counter_base = base + (NV_COUNTER_INDEX_BASE - NV_PIN_INDEX_BASE);
+  TPM2_HANDLE pin_index = calculate_nv_index(base, (uint32_t)uid);
+  TPM2_HANDLE counter_index = calculate_nv_index(counter_base, (uint32_t)uid);
 
   char *pin = ask_pin("Enter pin: ");
   if (pin == NULL) {
