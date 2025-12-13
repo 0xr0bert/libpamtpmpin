@@ -6,12 +6,6 @@
 #include <security/pam_modules.h>
 #include <stdint.h>
 
-#define NV_PIN_INDEX_BASE 0x01500000
-#define NV_COUNTER_INDEX_BASE 0x01600000
-#define PIN_NV_DATA_SIZE 32
-#define COUNTER_NV_DATA_SIZE 8
-#define MAX_PIN_FAILURES 5
-
 /**
  * PAM module authentication entry point
  * @param pamh The PAM handle
@@ -47,14 +41,6 @@ int64_t get_uid(pam_handle_t *pamh);
  * @return The user input string (must be freed by caller), or NULL on error
  */
 char *ask_user(pam_handle_t *pamh, char *prompt);
-
-/**
- * Compute the NV Index for a given UID
- * @param mask The NV index base mask
- * @param uid The user ID
- * @return The computed NV index, mask ORed with the UID
- */
-uint32_t get_nv_index(uint32_t mask, uint32_t uid);
 
 int32_t verify_nv_pin(pam_handle_t *pamh, const char *pin,
                       TPM2_HANDLE pin_index_val, TPM2_HANDLE counter_index_val);

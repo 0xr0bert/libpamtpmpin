@@ -1,5 +1,6 @@
 #define _DEFAULT_SOURCE
 #include "pamtpmpin.h"
+#include "tpmpin_common.h"
 
 #include <pwd.h>
 #include <security/_pam_types.h>
@@ -146,83 +147,6 @@ char *ask_user(pam_handle_t *pamh, char *prompt) {
 }
 
 // TPM -------------------------------------------------------------------------
-inline uint32_t get_nv_index(uint32_t mask, uint32_t uid) { return uid | mask; }
-
-static void encode_u64_be(uint64_t value, uint8_t *buffer, size_t size) {
-  for (size_t i = 0; i < size; ++i) {
-    buffer[size - 1 - i] = (uint8_t)(value & 0xFF);
-    value >>= 8;
-  }
-}
-
-static uint64_t decode_u64_be(const uint8_t *buffer, size_t size) {
-  uint64_t value = 0;
-  for (size_t i = 0; i < size; ++i) {
-    value = (value << 8) | buffer[i];
-  }
-  return value;
-}
-
-static bool rc_is_bad_auth(TSS2_RC rc) {
-  return (rc & TPM2_RC_FMT1) && ((rc & 0x3F) == (TPM2_RC_BAD_AUTH & 0x3F));
-}
-
-static bool rc_is_policy_fail(TSS2_RC rc) {
-  // Failed counters have TPM2_RC_POLICY
-  return (rc & 0xFFF) == TPM2_RC_POLICY;
-}
-
-static TSS2_RC read_counter_value(ESYS_CONTEXT *ctx, ESYS_TR counter_handle,
-                                  uint64_t *value) {
-  TPM2B_MAX_NV_BUFFER *out = NULL;
-  TSS2_RC rc =
-      Esys_NV_Read(ctx, ESYS_TR_RH_OWNER, counter_handle, ESYS_TR_PASSWORD,
-                   ESYS_TR_NONE, ESYS_TR_NONE, COUNTER_NV_DATA_SIZE, 0, &out);
-  if (rc == TSS2_RC_SUCCESS && out != NULL) {
-    *value = decode_u64_be(out->buffer, COUNTER_NV_DATA_SIZE);
-  }
-  if (out != NULL) {
-    Esys_Free(out);
-  }
-  return rc;
-}
-
-static TSS2_RC write_counter_value(ESYS_CONTEXT *ctx, ESYS_TR counter_handle,
-                                   uint64_t value) {
-  TPM2B_MAX_NV_BUFFER data = {.size = COUNTER_NV_DATA_SIZE};
-  encode_u64_be(value, data.buffer, COUNTER_NV_DATA_SIZE);
-  return Esys_NV_Write(ctx, ESYS_TR_RH_OWNER, counter_handle, ESYS_TR_PASSWORD,
-                       ESYS_TR_NONE, ESYS_TR_NONE, &data, 0);
-}
-
-static TSS2_RC reset_counter(ESYS_CONTEXT *ctx, ESYS_TR counter_handle) {
-  return write_counter_value(ctx, counter_handle, 0);
-}
-
-static TSS2_RC increment_counter(ESYS_CONTEXT *ctx, ESYS_TR counter_handle) {
-  uint64_t current = 0;
-  TSS2_RC rc = read_counter_value(ctx, counter_handle, &current);
-  if (rc != TSS2_RC_SUCCESS) {
-    return rc;
-  }
-
-  if (current < UINT64_MAX) {
-    current++;
-  }
-  if (current > MAX_PIN_FAILURES) {
-    current = MAX_PIN_FAILURES;
-  }
-  return write_counter_value(ctx, counter_handle, current);
-}
-
-static TSS2_RC apply_policy_limit(ESYS_CONTEXT *ctx, ESYS_TR counter_handle,
-                                  ESYS_TR policy_session) {
-  TPM2B_OPERAND operand = {.size = COUNTER_NV_DATA_SIZE};
-  encode_u64_be(MAX_PIN_FAILURES, operand.buffer, operand.size);
-  return Esys_PolicyNV(ctx, counter_handle, counter_handle, policy_session,
-                       ESYS_TR_PASSWORD, ESYS_TR_NONE, ESYS_TR_NONE, &operand,
-                       0, TPM2_EO_UNSIGNED_LT);
-}
 
 int32_t verify_nv_pin(pam_handle_t *pamh, const char *pin,
                       TPM2_HANDLE pin_index_val,

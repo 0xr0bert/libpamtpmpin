@@ -5,18 +5,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <termios.h>
-#include <tss2_common.h>
-#include <tss2_esys.h>
-#include <tss2_tpm2_types.h>
+#include <tpmpin_common.h>
+#include <tss2/tss2_common.h>
+#include <tss2/tss2_esys.h>
+#include <tss2/tss2_tpm2_types.h>
 #include <unistd.h>
-
-// Constants -------------------------------------------------------------------
-
-#define NV_PIN_INDEX_BASE 0x01500000
-#define NV_COUNTER_INDEX_BASE 0x01600000
-#define PIN_NV_DATA_SIZE 32
-#define COUNTER_NV_DATA_SIZE 8
-#define MAX_PIN_FAILURES 5
 
 // Forward declarations --------------------------------------------------------
 
@@ -35,14 +28,6 @@ static bool enroll_user(const char *username);
 static int64_t get_uid(const char *username);
 
 /**
- * Encode a 64-bit unsigned integer into a big-endian byte buffer
- * @param value The 64-bit unsigned integer to encode
- * @param buffer The buffer to write the encoded bytes into
- * @param size The size of the buffer (number of bytes to write)
- */
-static void encode_u64_be(uint64_t value, uint8_t *buffer, size_t size);
-
-/**
  * Enroll a user in the TPM with the specified PIN and NV indexes
  * @param pin The PIN to enroll
  * @param pin_index_val The NV index for the PIN
@@ -52,76 +37,7 @@ static void encode_u64_be(uint64_t value, uint8_t *buffer, size_t size);
 static bool enroll_user_in_tpm(const char *pin, TPM2_HANDLE pin_index_val,
                                TPM2_HANDLE counter_index_val);
 
-/**
- * Remove an NV index if it exists
- * @param ctx The ESYS context
- * @param index The NV index to remove
- * @return TSS2_RC_SUCCESS on success, or error code on failure
- */
-static TSS2_RC remove_nv_if_exists(ESYS_CONTEXT *ctx, TPM2_HANDLE index);
-
-/**
- * Define a counter NV index
- * @param ctx The ESYS context
- * @param index The NV index to define
- * @return TSS2_RC_SUCCESS on success, or error code on failure
- */
-static TSS2_RC define_counter_index(ESYS_CONTEXT *ctx, TPM2_HANDLE index);
-
-/**
- * Write a value to the counter NV index
- * @param ctx The ESYS context
- * @param counter_handle The ESYS_TR handle for the counter NV index
- * @param value The value to write
- * @return TSS2_RC_SUCCESS on success, or error code on failure
- */
-static TSS2_RC write_counter_value(ESYS_CONTEXT *ctx, ESYS_TR counter_handle,
-                                   uint64_t value);
-
-/**
- * Write a placeholder value to the PIN NV index
- * @param ctx The ESYS context
- * @param pin_index The NV index for the PIN
- * @return TSS2_RC_SUCCESS on success, or error code on failure
- */
-static TSS2_RC write_pin_placeholder(ESYS_CONTEXT *ctx, TPM2_HANDLE pin_index);
-
-/**
- * Compute the policy digest for the PIN NV index
- * @param ctx The ESYS context
- * @param counter_handle The ESYS_TR handle for the counter NV index
- * @param digest Output parameter for the computed policy digest
- * @return TSS2_RC_SUCCESS on success, or error code on failure
- */
-static TSS2_RC compute_pin_policy_digest(ESYS_CONTEXT *ctx,
-                                         ESYS_TR counter_handle,
-                                         TPM2B_DIGEST **digest);
-
-/**
- * Define the PIN NV index with the specified policy and PIN
- * @param ctx The ESYS context
- * @param index The NV index for the PIN
- * @param policy_digest The policy digest to associate with the NV index
- * @param pin The PIN to set as the auth value
- * @return TSS2_RC_SUCCESS on success, or error code on failure
- */
-static TSS2_RC define_pin_index(ESYS_CONTEXT *ctx, TPM2_HANDLE index,
-                                const TPM2B_DIGEST *policy_digest,
-                                const char *pin);
-
 static char *ask_pin(const char *prompt);
-
-// Inlines ---------------------------------------------------------------------
-
-/**
- * Compute the NV Index for a given UID
- * @param mask The NV index base mask
- * @param uid The user ID
- * @return The computed NV index, mask ORed with the UID
- */
-static inline uint32_t get_nv_index(uint32_t mask, uint32_t uid) {
-  return uid | mask;
-}
 
 // Main ------------------------------------------------------------------------
 
@@ -253,162 +169,6 @@ static char *ask_pin(const char *prompt) {
 }
 
 // TPM -------------------------------------------------------------------------
-
-static void encode_u64_be(uint64_t value, uint8_t *buffer, size_t size) {
-  for (size_t i = 0; i < size; ++i) {
-    buffer[size - 1 - i] = (uint8_t)(value & 0xFF);
-    value >>= 8;
-  }
-}
-
-static TSS2_RC remove_nv_if_exists(ESYS_CONTEXT *ctx, TPM2_HANDLE index) {
-  // Get the handle for the NV index
-  ESYS_TR nv_handle = ESYS_TR_NONE;
-  TSS2_RC rc = Esys_TR_FromTPMPublic(ctx, index, ESYS_TR_NONE, ESYS_TR_NONE,
-                                     ESYS_TR_NONE, &nv_handle);
-  if (rc != TSS2_RC_SUCCESS) {
-    if ((rc & TPM2_RC_FMT1) && (rc & ~0xF00) == TPM2_RC_HANDLE) {
-      // NV index does not exist
-      return TSS2_RC_SUCCESS;
-    }
-    return rc;
-  }
-
-  // If found, undefine the NV space
-  if (rc == TSS2_RC_SUCCESS) {
-    // TODO: Allow owner auth to be set
-    TPM2B_AUTH empty_auth = {.size = 0};
-    Esys_TR_SetAuth(ctx, ESYS_TR_RH_OWNER, &empty_auth);
-    rc = Esys_NV_UndefineSpace(ctx, ESYS_TR_RH_OWNER, nv_handle,
-                               ESYS_TR_PASSWORD, ESYS_TR_NONE, ESYS_TR_NONE);
-    if (rc == TSS2_RC_SUCCESS) {
-      nv_handle = ESYS_TR_NONE; // Esys flushes the handle already
-    }
-  }
-
-  if (nv_handle != ESYS_TR_NONE) {
-    Esys_TR_Close(ctx, &nv_handle);
-  }
-  return rc;
-}
-
-static TSS2_RC define_counter_index(ESYS_CONTEXT *ctx, TPM2_HANDLE index) {
-  TPM2B_NV_PUBLIC public_info = {
-      .size = 0,
-      .nvPublic = {
-          .nvIndex = index,
-          .nameAlg = TPM2_ALG_SHA256,
-          .attributes = (TPMA_NV_OWNERWRITE | TPMA_NV_OWNERREAD |
-                         TPMA_NV_AUTHWRITE | TPMA_NV_AUTHREAD | TPMA_NV_NO_DA),
-          .authPolicy = {.size = 0},
-          .dataSize = COUNTER_NV_DATA_SIZE,
-      }};
-
-  TPM2B_AUTH empty_auth = {.size = 0};
-  ESYS_TR tmp_handle = ESYS_TR_NONE;
-
-  TSS2_RC rc =
-      Esys_NV_DefineSpace(ctx, ESYS_TR_RH_OWNER, ESYS_TR_PASSWORD, ESYS_TR_NONE,
-                          ESYS_TR_NONE, &empty_auth, &public_info, &tmp_handle);
-  if (rc == TSS2_RC_SUCCESS && tmp_handle != ESYS_TR_NONE) {
-    Esys_TR_Close(ctx, &tmp_handle);
-  }
-  return rc;
-}
-
-static TSS2_RC write_counter_value(ESYS_CONTEXT *ctx, ESYS_TR counter_handle,
-                                   uint64_t value) {
-  TPM2B_MAX_NV_BUFFER data = {.size = COUNTER_NV_DATA_SIZE};
-  encode_u64_be(value, data.buffer, COUNTER_NV_DATA_SIZE);
-
-  return Esys_NV_Write(ctx, ESYS_TR_RH_OWNER, counter_handle, ESYS_TR_PASSWORD,
-                       ESYS_TR_NONE, ESYS_TR_NONE, &data, 0);
-}
-
-static TSS2_RC write_pin_placeholder(ESYS_CONTEXT *ctx, TPM2_HANDLE pin_index) {
-  ESYS_TR pin_handle = ESYS_TR_NONE;
-  TSS2_RC rc = Esys_TR_FromTPMPublic(ctx, pin_index, ESYS_TR_NONE, ESYS_TR_NONE,
-                                     ESYS_TR_NONE, &pin_handle);
-  if (rc != TSS2_RC_SUCCESS) {
-    return rc;
-  }
-
-  TPM2B_MAX_NV_BUFFER nv_data = {.size = PIN_NV_DATA_SIZE};
-  memset(nv_data.buffer, 0, nv_data.size);
-  rc = Esys_NV_Write(ctx, ESYS_TR_RH_OWNER, pin_handle, ESYS_TR_PASSWORD,
-                     ESYS_TR_NONE, ESYS_TR_NONE, &nv_data, 0);
-  Esys_TR_Close(ctx, &pin_handle);
-  return rc;
-}
-
-static TSS2_RC compute_pin_policy_digest(ESYS_CONTEXT *ctx,
-                                         ESYS_TR counter_handle,
-                                         TPM2B_DIGEST **digest) {
-  TPMT_SYM_DEF symmetric = {.algorithm = TPM2_ALG_NULL};
-  ESYS_TR trial_session = ESYS_TR_NONE;
-
-  // Start a trial session to build the policy digest without executing it
-  TSS2_RC rc = Esys_StartAuthSession(
-      ctx, ESYS_TR_NONE, ESYS_TR_NONE, ESYS_TR_NONE, ESYS_TR_NONE, ESYS_TR_NONE,
-      NULL, TPM2_SE_TRIAL, &symmetric, TPM2_ALG_SHA256, &trial_session);
-  if (rc != TSS2_RC_SUCCESS) {
-    return rc;
-  }
-
-  TPM2B_OPERAND operand = {.size = COUNTER_NV_DATA_SIZE};
-  encode_u64_be(MAX_PIN_FAILURES, operand.buffer, operand.size);
-
-  // Require the counter value to remain below MAX_PIN_FAILURES
-  rc = Esys_PolicyNV(ctx, counter_handle, counter_handle, trial_session,
-                     ESYS_TR_PASSWORD, ESYS_TR_NONE, ESYS_TR_NONE, &operand, 0,
-                     TPM2_EO_UNSIGNED_LT);
-  if (rc == TSS2_RC_SUCCESS) {
-    // Require knowledge of the PIN auth value for future access
-    rc = Esys_PolicyAuthValue(ctx, trial_session, ESYS_TR_NONE, ESYS_TR_NONE,
-                              ESYS_TR_NONE);
-  }
-  if (rc == TSS2_RC_SUCCESS) {
-    // Capture the finalized digest that encodes both requirements
-    rc = Esys_PolicyGetDigest(ctx, trial_session, ESYS_TR_NONE, ESYS_TR_NONE,
-                              ESYS_TR_NONE, digest);
-  }
-
-  if (trial_session != ESYS_TR_NONE) {
-    Esys_FlushContext(ctx, trial_session);
-  }
-
-  return rc;
-}
-
-static TSS2_RC define_pin_index(ESYS_CONTEXT *ctx, TPM2_HANDLE index,
-                                const TPM2B_DIGEST *policy_digest,
-                                const char *pin) {
-  TPM2B_NV_PUBLIC public_info = {
-      .size = 0,
-      .nvPublic = {
-          .nvIndex = index,
-          .nameAlg = TPM2_ALG_SHA256,
-          .attributes = (TPMA_NV_OWNERWRITE | TPMA_NV_POLICYREAD |
-                         TPMA_NV_AUTHREAD | TPMA_NV_NO_DA),
-          .authPolicy = {.size = policy_digest->size},
-          .dataSize = PIN_NV_DATA_SIZE,
-      }};
-  memcpy(public_info.nvPublic.authPolicy.buffer, policy_digest->buffer,
-         policy_digest->size);
-
-  TPM2B_AUTH pin_auth = {.size = strlen(pin)};
-  memcpy(pin_auth.buffer, pin, pin_auth.size);
-
-  ESYS_TR tmp_handle = ESYS_TR_NONE;
-  TSS2_RC rc =
-      Esys_NV_DefineSpace(ctx, ESYS_TR_RH_OWNER, ESYS_TR_PASSWORD, ESYS_TR_NONE,
-                          ESYS_TR_NONE, &pin_auth, &public_info, &tmp_handle);
-  explicit_bzero(&pin_auth, sizeof(pin_auth));
-  if (rc == TSS2_RC_SUCCESS && tmp_handle != ESYS_TR_NONE) {
-    Esys_TR_Close(ctx, &tmp_handle);
-  }
-  return rc;
-}
 
 static bool enroll_user_in_tpm(const char *pin, TPM2_HANDLE pin_index_val,
                                TPM2_HANDLE counter_index_val) {
