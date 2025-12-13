@@ -18,10 +18,11 @@
  * @param username The username to enroll
  * @param owner_password The TPM owner password (optional, can be NULL)
  * @param base The NV index base
+ * @param max_tries The maximum number of tries allowed
  * @return 0 on success, -1 on failure
  */
 static bool enroll_user(const char *username, const char *owner_password,
-                        uint32_t base);
+                        uint32_t base, uint64_t max_tries);
 
 /**
  * Get the UID of the specified username
@@ -36,11 +37,12 @@ static int64_t get_uid(const char *username);
  * @param pin_index_val The NV index for the PIN
  * @param counter_index_val The NV index for the failure counter
  * @param owner_password The TPM owner password (optional, can be NULL)
+ * @param max_tries The maximum number of tries allowed
  * @return true on success, false on failure
  */
 static bool enroll_user_in_tpm(const char *pin, TPM2_HANDLE pin_index_val,
                                TPM2_HANDLE counter_index_val,
-                               const char *owner_password);
+                               const char *owner_password, uint64_t max_tries);
 
 static char *ask_pin(const char *prompt);
 
@@ -49,7 +51,8 @@ static char *ask_pin(const char *prompt);
 int main(int argc, char **argv) {
   setenv("TSS2_LOG", "all+NONE", 0);
   if (argc < 3) {
-    printf("Usage: %s enroll <username> [owner_password] [--base <hex>]\n",
+    printf("Usage: %s enroll <username> [owner_password] [--base <hex>] "
+           "[--max-tries <number>]\n",
            argv[0]);
     return 1;
   }
@@ -57,6 +60,7 @@ int main(int argc, char **argv) {
     const char *username = NULL;
     const char *owner_password = NULL;
     uint32_t base = NV_PIN_INDEX_BASE;
+    uint64_t max_tries = MAX_PIN_FAILURES;
 
     for (int i = 2; i < argc; ++i) {
       if (strcmp(argv[i], "--base") == 0) {
@@ -64,6 +68,13 @@ int main(int argc, char **argv) {
           base = (uint32_t)strtoul(argv[++i], NULL, 0);
         } else {
           fprintf(stderr, "--base requires an argument\n");
+          return 1;
+        }
+      } else if (strcmp(argv[i], "--max-tries") == 0) {
+        if (i + 1 < argc) {
+          max_tries = (uint64_t)strtoul(argv[++i], NULL, 0);
+        } else {
+          fprintf(stderr, "--max-tries requires an argument\n");
           return 1;
         }
       } else if (username == NULL) {
@@ -74,12 +85,13 @@ int main(int argc, char **argv) {
     }
 
     if (username == NULL) {
-      printf("Usage: %s enroll <username> [owner_password] [--base <hex>]\n",
+      printf("Usage: %s enroll <username> [owner_password] [--base <hex>] "
+             "[--max-tries <number>]\n",
              argv[0]);
       return 1;
     }
 
-    bool result = enroll_user(username, owner_password, base);
+    bool result = enroll_user(username, owner_password, base, max_tries);
     if (result) {
       printf("User %s enrolled successfully.\n", username);
       return 0;
@@ -94,7 +106,7 @@ int main(int argc, char **argv) {
 }
 
 static bool enroll_user(const char *username, const char *owner_password,
-                        uint32_t base) {
+                        uint32_t base, uint64_t max_tries) {
   printf("enroll user: %s\n", username);
   int64_t uid = get_uid(username);
   printf("UID: %ld\n", uid);
@@ -132,8 +144,8 @@ static bool enroll_user(const char *username, const char *owner_password,
   free(pin_confirm);
   printf("Pin OK\n");
 
-  bool result =
-      enroll_user_in_tpm(pin, pin_index, counter_index, owner_password);
+  bool result = enroll_user_in_tpm(pin, pin_index, counter_index,
+                                   owner_password, max_tries);
   explicit_bzero(pin, strlen(pin));
   free(pin);
   return result;
@@ -214,7 +226,7 @@ static char *ask_pin(const char *prompt) {
 
 static bool enroll_user_in_tpm(const char *pin, TPM2_HANDLE pin_index_val,
                                TPM2_HANDLE counter_index_val,
-                               const char *owner_password) {
+                               const char *owner_password, uint64_t max_tries) {
   TSS2_RC rc;
   ESYS_CONTEXT *ctx = NULL;
   TPM2B_AUTH owner_auth = {.size = 0};
@@ -269,7 +281,8 @@ static bool enroll_user_in_tpm(const char *pin, TPM2_HANDLE pin_index_val,
     goto cleanup;
   }
 
-  rc = compute_pin_policy_digest(ctx, counter_handle, &policy_digest);
+  rc =
+      compute_pin_policy_digest(ctx, counter_handle, max_tries, &policy_digest);
   if (rc != TSS2_RC_SUCCESS) {
     fprintf(stderr, "Failed to compute PIN policy digest: 0x%x\n", rc);
     goto cleanup;

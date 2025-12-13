@@ -64,7 +64,8 @@ TSS2_RC reset_counter(ESYS_CONTEXT *ctx, ESYS_TR counter_handle) {
   return write_counter_value(ctx, counter_handle, 0);
 }
 
-TSS2_RC increment_counter(ESYS_CONTEXT *ctx, ESYS_TR counter_handle) {
+TSS2_RC increment_counter(ESYS_CONTEXT *ctx, ESYS_TR counter_handle,
+                          uint64_t max_tries) {
   uint64_t current = 0;
   TSS2_RC rc = read_counter_value(ctx, counter_handle, &current);
   if (rc != TSS2_RC_SUCCESS) {
@@ -74,16 +75,16 @@ TSS2_RC increment_counter(ESYS_CONTEXT *ctx, ESYS_TR counter_handle) {
   if (current < UINT64_MAX) {
     current++;
   }
-  if (current > MAX_PIN_FAILURES) {
-    current = MAX_PIN_FAILURES;
+  if (current > max_tries) {
+    current = max_tries;
   }
   return write_counter_value(ctx, counter_handle, current);
 }
 
 TSS2_RC apply_policy_limit(ESYS_CONTEXT *ctx, ESYS_TR counter_handle,
-                           ESYS_TR policy_session) {
+                           ESYS_TR policy_session, uint64_t max_tries) {
   TPM2B_OPERAND operand = {.size = COUNTER_NV_DATA_SIZE};
-  encode_u64_be(MAX_PIN_FAILURES, operand.buffer, operand.size);
+  encode_u64_be(max_tries, operand.buffer, operand.size);
   return Esys_PolicyNV(ctx, counter_handle, counter_handle, policy_session,
                        ESYS_TR_PASSWORD, ESYS_TR_NONE, ESYS_TR_NONE, &operand,
                        0, TPM2_EO_UNSIGNED_LT);
@@ -197,7 +198,7 @@ TSS2_RC write_pin_placeholder(ESYS_CONTEXT *ctx, TPM2_HANDLE pin_index) {
 }
 
 TSS2_RC compute_pin_policy_digest(ESYS_CONTEXT *ctx, ESYS_TR counter_handle,
-                                  TPM2B_DIGEST **digest) {
+                                  uint64_t max_tries, TPM2B_DIGEST **digest) {
   TPMT_SYM_DEF symmetric = {.algorithm = TPM2_ALG_NULL};
   ESYS_TR trial_session = ESYS_TR_NONE;
 
@@ -210,7 +211,7 @@ TSS2_RC compute_pin_policy_digest(ESYS_CONTEXT *ctx, ESYS_TR counter_handle,
   }
 
   TPM2B_OPERAND operand = {.size = COUNTER_NV_DATA_SIZE};
-  encode_u64_be(MAX_PIN_FAILURES, operand.buffer, operand.size);
+  encode_u64_be(max_tries, operand.buffer, operand.size);
 
   // Require the counter value to remain below MAX_PIN_FAILURES
   rc = Esys_PolicyNV(ctx, counter_handle, counter_handle, trial_session,

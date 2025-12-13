@@ -43,6 +43,7 @@ int64_t get_uid(pam_handle_t *pamh);
 char *ask_user(pam_handle_t *pamh, char *prompt);
 
 int32_t verify_nv_pin(pam_handle_t *pamh, const char *pin,
-                      TPM2_HANDLE pin_index_val, TPM2_HANDLE counter_index_val);
+                      TPM2_HANDLE pin_index_val, TPM2_HANDLE counter_index_val,
+                      uint64_t max_tries);
 
 #endif // PAMTPMPIN_H

@@ -54,16 +54,21 @@ int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
   }
 
   uint32_t pin_base = NV_PIN_INDEX_BASE;
+  uint64_t max_tries = MAX_PIN_FAILURES;
   for (int i = 0; i < argc; ++i) {
     if (strncmp(argv[i], "base=", 5) == 0) {
       pin_base = (uint32_t)strtoul(argv[i] + 5, NULL, 0);
+    } else if (strncmp(argv[i], "max_tries=", 10) == 0) {
+      max_tries = (uint64_t)strtoul(argv[i] + 10, NULL, 0);
     }
   }
-  uint32_t counter_base = pin_base + (NV_COUNTER_INDEX_BASE - NV_PIN_INDEX_BASE);
+  uint32_t counter_base =
+      pin_base + (NV_COUNTER_INDEX_BASE - NV_PIN_INDEX_BASE);
 
   uint32_t pin_index = calculate_nv_index(pin_base, (uint32_t)uid);
   uint32_t counter_index = calculate_nv_index(counter_base, (uint32_t)uid);
-  int verify_res = verify_nv_pin(pamh, pin, pin_index, counter_index);
+  int verify_res =
+      verify_nv_pin(pamh, pin, pin_index, counter_index, max_tries);
   explicit_bzero(pin, strlen(pin));
   free(pin);
   if (verify_res == 0) {
@@ -157,8 +162,8 @@ char *ask_user(pam_handle_t *pamh, char *prompt) {
 // TPM -------------------------------------------------------------------------
 
 int32_t verify_nv_pin(pam_handle_t *pamh, const char *pin,
-                      TPM2_HANDLE pin_index_val,
-                      TPM2_HANDLE counter_index_val) {
+                      TPM2_HANDLE pin_index_val, TPM2_HANDLE counter_index_val,
+                      uint64_t max_tries) {
   TSS2_RC rc;
   ESYS_CONTEXT *ctx = NULL;
   ESYS_TR pin_handle = ESYS_TR_NONE;
@@ -208,7 +213,7 @@ int32_t verify_nv_pin(pam_handle_t *pamh, const char *pin,
     goto cleanup;
   }
 
-  rc = apply_policy_limit(ctx, counter_handle, policy_session);
+  rc = apply_policy_limit(ctx, counter_handle, policy_session, max_tries);
   if (rc != TSS2_RC_SUCCESS) {
     if (rc_is_policy_fail(rc)) {
       log_error(pamh, "User is locked due to too many failures");
@@ -247,7 +252,7 @@ int32_t verify_nv_pin(pam_handle_t *pamh, const char *pin,
     reset_counter(ctx, counter_handle);
     result = 0;
   } else if (rc_is_bad_auth(rc)) {
-    increment_counter(ctx, counter_handle);
+    increment_counter(ctx, counter_handle, max_tries);
     result = 1;
   } else if (rc_is_policy_fail(rc)) {
     log_error(pamh, "User is locked due to too many failures");

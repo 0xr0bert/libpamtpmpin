@@ -91,19 +91,22 @@ TSS2_RC reset_counter(ESYS_CONTEXT *ctx, ESYS_TR counter_handle);
  * Increment the counter value
  * @param ctx The ESYS context
  * @param counter_handle The ESYS_TR handle for the counter NV index
+ * @param max_tries The maximum number of tries allowed
  * @return TSS2_RC_SUCCESS on success, or error code on failure
  */
-TSS2_RC increment_counter(ESYS_CONTEXT *ctx, ESYS_TR counter_handle);
+TSS2_RC increment_counter(ESYS_CONTEXT *ctx, ESYS_TR counter_handle,
+                          uint64_t max_tries);
 
 /**
  * Apply the policy limit to the session
  * @param ctx The ESYS context
  * @param counter_handle The ESYS_TR handle for the counter NV index
  * @param policy_session The policy session handle
+ * @param max_tries The maximum number of tries allowed
  * @return TSS2_RC_SUCCESS on success, or error code on failure
  */
 TSS2_RC apply_policy_limit(ESYS_CONTEXT *ctx, ESYS_TR counter_handle,
-                           ESYS_TR policy_session);
+                           ESYS_TR policy_session, uint64_t max_tries);
 
 /**
  * Remove an NV index if it exists
@@ -146,10 +149,11 @@ TSS2_RC write_pin_placeholder(ESYS_CONTEXT *ctx, TPM2_HANDLE pin_index);
  * Compute the policy digest for the PIN NV index
  * @param ctx The ESYS context
  * @param counter_handle The ESYS_TR handle for the counter NV index
+ * @param max_tries The maximum number of tries allowed
  * @param digest Output parameter for the computed policy digest
  * @return TSS2_RC_SUCCESS on success, or error code on failure
  */
 TSS2_RC compute_pin_policy_digest(ESYS_CONTEXT *ctx, ESYS_TR counter_handle,
-                                  TPM2B_DIGEST **digest);
+                                  uint64_t max_tries, TPM2B_DIGEST **digest);
 
 #endif // TPMPIN_COMMON_H
