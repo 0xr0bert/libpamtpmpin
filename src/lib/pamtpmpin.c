@@ -19,7 +19,6 @@
 #include <tss2/tss2_tpm2_types.h>
 #include <unistd.h>
 
-// Add a small error logging helper that uses pam_syslog when available
 static void log_error(pam_handle_t *pamh, const char *fmt, ...) {
   char buf[1024];
   va_list ap;
