@@ -13,12 +13,19 @@ libtpmpin_common = static_library(
     include_directories: common_incdir
 )
 
+pam_modules_dir = get_option('pam_modules_dir')
+if pam_modules_dir == ''
+    pam_modules_dir = get_option('libdir') / 'security'
+endif
+
 shared_library(
-    'pamtpmpin', 
+    'pam_tpmpin', 
     'src/lib/pamtpmpin.c',
     dependencies: [pam_dep, tpm_dep],
     include_directories: [lib_incdir, common_incdir],
-    link_with: libtpmpin_common
+    link_with: libtpmpin_common,
+    install: true,
+    install_dir: pam_modules_dir
 )
 
 executable(
@@ -26,5 +33,6 @@ executable(
     'src/bin/tpmpin.c',
     dependencies: [pam_dep, tpm_dep],
     include_directories: common_incdir,
-    link_with: libtpmpin_common
+    link_with: libtpmpin_common,
+    install: true
 )

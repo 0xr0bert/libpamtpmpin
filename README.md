@@ -22,7 +22,18 @@ A PAM module allowing authentication via a PIN backed by a TPM 2.0 device.
 
 ### Build and Install
 
-TODO
+```bash
+meson setup build
+meson compile -C build
+sudo meson install -C build
+```
+
+By default, the PAM module is installed to `/usr/lib/security` (or `/usr/local/lib/security` depending on prefix). If your distribution uses a different path (like `/lib/security`), you can specify it:
+
+```bash
+meson configure build -Dpam_modules_dir=/lib/security
+sudo meson install -C build
+```
 
 ## Configuration
 
