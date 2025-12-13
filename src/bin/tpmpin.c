@@ -178,7 +178,7 @@ static bool enroll_user(const char *username) {
   free(pin_confirm);
   printf("Pin OK\n");
 
-  bool result = enroll_user_in_tpm(pin, pin_index, counter_index) == 0;
+  bool result = enroll_user_in_tpm(pin, pin_index, counter_index);
   free(pin);
   return result;
 }
