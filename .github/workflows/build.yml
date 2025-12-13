@@ -15,7 +15,7 @@ jobs:
     - name: install-dependencies
       run: |
         DEBIAN_NONINTERACTIVE=1 sudo apt-get update -y
-        DEBIAN_NONINTERACTIVE=1 sudo apt-get install -y meson ninja-build libtss2-dev libpam-dev clang
+        DEBIAN_NONINTERACTIVE=1 sudo apt-get install -y meson ninja-build libtss2-dev libpam-dev clang swtpm libtss2-tcti-swtpm0 tpm2-tools
     - uses: actions/checkout@v4
     - name: setup build
       run: CC=clang meson setup build
@@ -23,3 +23,7 @@ jobs:
       run: |
         cd build
         ninja
+    - name: test
+      run: |
+        cd build
+        meson test --print-errorlogs

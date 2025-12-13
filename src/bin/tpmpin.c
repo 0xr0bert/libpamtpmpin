@@ -89,14 +89,24 @@ int main(int argc, char **argv) {
     for (int i = 2; i < argc; ++i) {
       if (strcmp(argv[i], "--base") == 0) {
         if (i + 1 < argc) {
-          base = (uint32_t)strtoul(argv[++i], NULL, 0);
+          char *endptr;
+          base = (uint32_t)strtoul(argv[++i], &endptr, 0);
+          if (*endptr != '\0' || endptr == argv[i]) {
+            fprintf(stderr, "Invalid value for --base\n");
+            return 1;
+          }
         } else {
           fprintf(stderr, "--base requires an argument\n");
           return 1;
         }
       } else if (strcmp(argv[i], "--max-tries") == 0) {
         if (i + 1 < argc) {
-          max_tries = (uint64_t)strtoul(argv[++i], NULL, 0);
+          char *endptr;
+          max_tries = (uint64_t)strtoul(argv[++i], &endptr, 0);
+          if (*endptr != '\0' || endptr == argv[i]) {
+            fprintf(stderr, "Invalid value for --max-tries\n");
+            return 1;
+          }
         } else {
           fprintf(stderr, "--max-tries requires an argument\n");
           return 1;
@@ -146,7 +156,12 @@ int main(int argc, char **argv) {
     for (int i = 2; i < argc; ++i) {
       if (strcmp(argv[i], "--base") == 0) {
         if (i + 1 < argc) {
-          base = (uint32_t)strtoul(argv[++i], NULL, 0);
+          char *endptr;
+          base = (uint32_t)strtoul(argv[++i], &endptr, 0);
+          if (*endptr != '\0' || endptr == argv[i]) {
+            fprintf(stderr, "Invalid value for --base\n");
+            return 1;
+          }
         } else {
           fprintf(stderr, "--base requires an argument\n");
           return 1;
