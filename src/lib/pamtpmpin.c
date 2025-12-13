@@ -40,6 +40,8 @@ static void log_error(pam_handle_t *pamh, const char *fmt, ...) {
 // PAM Module ------------------------------------------------------------------
 int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
                         const char **argv) {
+  setenv("TSS2_LOG", "all+NONE", 0);
+
   long uid = get_uid(pamh);
   if (uid < 0) {
     return -uid;

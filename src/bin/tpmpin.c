@@ -126,6 +126,7 @@ static inline uint32_t get_nv_index(uint32_t mask, uint32_t uid) {
 // Main ------------------------------------------------------------------------
 
 int main(int argc, char **argv) {
+  setenv("TSS2_LOG", "all+NONE", 0);
   if (argc < 3) {
     printf("Usage: %s enroll <username>\n", argv[0]);
     return 1;
