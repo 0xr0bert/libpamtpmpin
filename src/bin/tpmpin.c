@@ -1,6 +1,5 @@
 #include "tss2_common.h"
 #include "tss2_esys.h"
-#include "tss2_rc.h"
 #include "tss2_tpm2_types.h"
 #include <pwd.h>
 #include <stdbool.h>
