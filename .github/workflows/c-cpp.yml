@@ -1,0 +1,23 @@
+name: C/C++ CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - name: install-dependencies
+      run: |
+        DEBIAN_NONINTERACTIVE=1 sudo apt-get update -y
+        DEBIAN_NONINTERACTIVE=1 sudo apt-get install -y meson ninja libtss2-dev libpam-dev
+    - uses: actions/checkout@v4
+    - name: setup builddir
+      run: meson setup build
+    - name: build
+      run: |
+        cd builddir
+        ninja
