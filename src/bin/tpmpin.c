@@ -107,6 +107,8 @@ static TSS2_RC define_pin_index(ESYS_CONTEXT *ctx, TPM2_HANDLE index,
                                 const TPM2B_DIGEST *policy_digest,
                                 const char *pin);
 
+static char *ask_pin();
+
 // Inlines ---------------------------------------------------------------------
 
 /**
@@ -147,7 +149,15 @@ static bool enroll_user(const char *username) {
   TPM2_HANDLE counter_index =
       get_nv_index(NV_COUNTER_INDEX_BASE, (uint32_t)uid);
 
-  return enroll_user_in_tpm("1234", pin_index, counter_index) == 0;
+  char *pin = ask_pin();
+  if (pin == NULL) {
+    fprintf(stderr, "Failed to read PIN from user\n");
+    return false;
+  }
+
+  bool result = enroll_user_in_tpm(pin, pin_index, counter_index) == 0;
+  free(pin);
+  return result;
 }
 
 static int64_t get_uid(const char *username) {
@@ -176,6 +186,22 @@ static int64_t get_uid(const char *username) {
   int64_t uid = (int64_t)pwd.pw_uid;
   free(buf);
   return uid;
+}
+
+static char *ask_pin() {
+  char *pin = NULL;
+  size_t len = 0;
+  printf("Enter PIN: ");
+  ssize_t read = getline(&pin, &len, stdin);
+  if (read == -1) {
+    free(pin);
+    return NULL;
+  }
+  // Remove trailing newline
+  if (read > 0 && pin[read - 1] == '\n') {
+    pin[read - 1] = '\0';
+  }
+  return pin;
 }
 
 // TPM -------------------------------------------------------------------------
