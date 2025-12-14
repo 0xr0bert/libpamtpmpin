@@ -35,6 +35,16 @@ meson configure build -Dpam_modules_dir=/lib/security
 sudo meson install -C build
 ```
 
+### Arch Linux / AUR
+
+This package is available on the Arch User Repository (AUR): https://aur.archlinux.org/packages/libpamtpmpin
+
+Install with an AUR helper (example using `paru`):
+
+```bash
+paru -S libpamtpmpin
+```
+
 ## Configuration
 
 ### 1. Enrol a User
