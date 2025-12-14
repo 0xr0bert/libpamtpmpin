@@ -84,7 +84,7 @@ You can pass options to the PAM module to customize its behaviour:
 **Example with options**:
 
 ```pam
-auth    sufficient      libpam_tpmpin.so max_tries=5 base=0x1000000
+auth    sufficient      libpam_tpmpin.so max_tries=5 base=0x1000000 unblock_on_success
 
 # Auto-unblock only after successful non-TPM auth
 auth    optional        libpam_tpmpin.so unblock_on_success

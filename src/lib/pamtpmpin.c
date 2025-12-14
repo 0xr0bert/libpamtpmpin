@@ -79,10 +79,23 @@ static int run_unblock_helper(pam_handle_t *pamh, const module_options *opts,
   snprintf(uid_arg, sizeof(uid_arg), "%ld", (long)uid);
   snprintf(base_arg, sizeof(base_arg), "0x%x", opts->pin_base);
 
-  char *const child_argv[] = {
+  const bool can_specify_uid = (getuid() == 0);
+
+  // If we're not root, do not pass --uid (helper enforces this).
+  char *const child_argv_with_uid[] = {
       (char *)opts->helper_path, (char *)"--uid", uid_arg,
       (char *)"--base",          base_arg,        NULL,
   };
+
+  char *const child_argv_self[] = {
+      (char *)opts->helper_path,
+      (char *)"--base",
+      base_arg,
+      NULL,
+  };
+
+  char *const *child_argv =
+      can_specify_uid ? child_argv_with_uid : child_argv_self;
 
   char *const child_envp[] = {
       (char *)"TSS2_LOG=all+NONE",
