@@ -359,8 +359,11 @@ static bool enroll_user_in_tpm(const char *pin, TPM2_HANDLE pin_index_val,
 
   rc = Esys_Initialize(&ctx, NULL, NULL);
   if (rc != TSS2_RC_SUCCESS) {
-    fprintf(stderr, "Failed to initialize ESYS context: 0x%x\n", rc);
-    return -1;
+    fprintf(
+        stderr,
+        "Failed to initialize ESYS context: 0x%x\nDo you have admin rights?\n",
+        rc);
+    return false;
   }
 
   // Clean up any previous enrollment artifacts
@@ -464,7 +467,10 @@ static bool unblock_user_in_tpm(TPM2_HANDLE counter_index_val,
 
   rc = Esys_Initialize(&ctx, NULL, NULL);
   if (rc != TSS2_RC_SUCCESS) {
-    fprintf(stderr, "Failed to initialize ESYS context: 0x%x\n", rc);
+    fprintf(
+        stderr,
+        "Failed to initialize ESYS context: 0x%x\nDo you have admin rights?\n",
+        rc);
     return false;
   }
 
