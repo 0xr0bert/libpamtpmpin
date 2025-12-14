@@ -28,6 +28,10 @@
 
 #define TPMPIN_PAM_DATA_NEEDS_UNBLOCK "tpmpin_needs_unblock"
 
+static int32_t is_counter_locked(pam_handle_t *pamh,
+                                 TPM2_HANDLE counter_index_val,
+                                 uint64_t max_tries);
+
 typedef struct {
   uint32_t pin_base;
   uint64_t max_tries;
@@ -149,16 +153,34 @@ int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
     return -uid;
   }
 
-  char *pin = ask_user(pamh, "Please enter your PIN: ");
-  if (pin == NULL) {
-    return PAM_AUTH_ERR;
-  }
-
   uint32_t counter_base =
       opts.pin_base + (NV_COUNTER_INDEX_BASE - NV_PIN_INDEX_BASE);
 
   uint32_t pin_index = calculate_nv_index(opts.pin_base, (uint32_t)uid);
   uint32_t counter_index = calculate_nv_index(counter_base, (uint32_t)uid);
+
+  int32_t locked = is_counter_locked(pamh, counter_index, opts.max_tries);
+  if (locked == 1) {
+    if (opts.unblock_on_success) {
+      bool *flag = calloc(1, sizeof(bool));
+      if (flag != NULL) {
+        *flag = true;
+        (void)pam_set_data(pamh, TPMPIN_PAM_DATA_NEEDS_UNBLOCK, flag,
+                           free_pam_data);
+      }
+      // Let other auth mechanisms succeed; we'll unblock in open_session.
+      return PAM_IGNORE;
+    }
+    return PAM_MAXTRIES;
+  } else if (locked < 0) {
+    return PAM_SYSTEM_ERR;
+  }
+
+  char *pin = ask_user(pamh, "Please enter your PIN: ");
+  if (pin == NULL) {
+    return PAM_AUTH_ERR;
+  }
+
   int verify_res =
       verify_nv_pin(pamh, pin, pin_index, counter_index, opts.max_tries);
   explicit_bzero(pin, strlen(pin));
@@ -420,4 +442,68 @@ cleanup:
   }
 
   return result;
+}
+
+static int32_t is_counter_locked(pam_handle_t *pamh,
+                                 TPM2_HANDLE counter_index_val,
+                                 uint64_t max_tries) {
+  TSS2_RC rc;
+  ESYS_CONTEXT *ctx = NULL;
+  ESYS_TR counter_handle = ESYS_TR_NONE;
+  ESYS_TR policy_session = ESYS_TR_NONE;
+  TPM2B_AUTH empty_auth = {.size = 0};
+  int32_t locked = -1;
+
+  rc = Esys_Initialize(&ctx, NULL, NULL);
+  if (rc != TSS2_RC_SUCCESS) {
+    log_error(pamh, "Failed to initialize ESYS context: 0x%x", rc);
+    return -1;
+  }
+
+  rc = Esys_TR_FromTPMPublic(ctx, counter_index_val, ESYS_TR_NONE, ESYS_TR_NONE,
+                             ESYS_TR_NONE, &counter_handle);
+  if (rc != TSS2_RC_SUCCESS) {
+    log_error(pamh, "Failed to load counter NV index 0x%x (rc=0x%x)",
+              counter_index_val, rc);
+    goto cleanup;
+  }
+
+  Esys_TR_SetAuth(ctx, ESYS_TR_RH_OWNER, &empty_auth);
+  Esys_TR_SetAuth(ctx, counter_handle, &empty_auth);
+
+  TPMT_SYM_DEF symmetric = {
+      .algorithm = TPM2_ALG_AES,
+      .keyBits.aes = 128,
+      .mode.aes = TPM2_ALG_CFB,
+  };
+
+  rc = Esys_StartAuthSession(ctx, ESYS_TR_NONE, ESYS_TR_NONE, ESYS_TR_NONE,
+                             ESYS_TR_NONE, ESYS_TR_NONE, NULL, TPM2_SE_POLICY,
+                             &symmetric, TPM2_ALG_SHA256, &policy_session);
+  if (rc != TSS2_RC_SUCCESS) {
+    log_error(pamh, "Failed to start policy session: 0x%x", rc);
+    goto cleanup;
+  }
+
+  rc = apply_policy_limit(ctx, counter_handle, policy_session, max_tries);
+  if (rc == TSS2_RC_SUCCESS) {
+    locked = 0;
+  } else if (rc_is_policy_fail(rc)) {
+    locked = 1;
+  } else {
+    log_error(pamh, "PolicyNV failed: 0x%x", rc);
+    locked = -1;
+  }
+
+cleanup:
+  if (policy_session != ESYS_TR_NONE) {
+    Esys_FlushContext(ctx, policy_session);
+  }
+  if (counter_handle != ESYS_TR_NONE) {
+    Esys_TR_Close(ctx, &counter_handle);
+  }
+  if (ctx != NULL) {
+    Esys_Finalize(&ctx);
+  }
+  return locked;
 }

@@ -69,7 +69,7 @@ Edit the appropriate PAM configuration file (e.g., `/etc/pam.d/sudo`, `/etc/pam.
 Add the following line before the standard unix authentication:
 
 ```pam
-auth    sufficient      pam_tpmpin.so
+auth    sufficient      libpam_tpmpin.so
 ```
 
 #### Module Options
@@ -84,18 +84,18 @@ You can pass options to the PAM module to customize its behaviour:
 **Example with options**:
 
 ```pam
-auth    sufficient      pam_tpmpin.so max_tries=5 base=0x1000000
+auth    sufficient      libpam_tpmpin.so max_tries=5 base=0x1000000
 
 # Auto-unblock only after successful non-TPM auth
-auth    optional        pam_tpmpin.so unblock_on_success
-session optional        pam_tpmpin.so unblock_on_success
+auth    optional        libpam_tpmpin.so unblock_on_success
+session optional        libpam_tpmpin.so unblock_on_success
 ```
 
 **Example `/etc/pam.d/sudo`**:
 
 ```pam
 #%PAM-1.0
-auth    sufficient      pam_tpmpin.so
+auth    sufficient      libpam_tpmpin.so
 auth    include         system-auth
 account include         system-auth
 session include         system-auth
