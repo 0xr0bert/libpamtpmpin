@@ -10,6 +10,18 @@ SERVICE_NAME="tpmpin-test"
 USERNAME=$(whoami)
 PIN="123456"
 
+skip() {
+    echo "SKIP: $1"
+    exit 77
+}
+
+# Require required tools
+command -v swtpm >/dev/null 2>&1 || skip "swtpm not installed"
+command -v tpm2_startup >/dev/null 2>&1 || skip "tpm2-tools not installed"
+
+# This test modifies /etc/pam.d and requires non-interactive sudo.
+sudo -n true >/dev/null 2>&1 || skip "sudo -n not permitted (needs passwordless sudo)"
+
 # Check if files exist
 if [ ! -f "$PAM_MODULE_PATH" ]; then
     echo "Error: PAM module not found at $PAM_MODULE_PATH"
@@ -37,7 +49,7 @@ cleanup() {
     echo "Cleaning up..."
     kill $SWTPM_PID
     rm -rf $TPM_DIR
-    sudo rm -f /etc/pam.d/$SERVICE_NAME
+    sudo -n rm -f /etc/pam.d/$SERVICE_NAME || true
 }
 trap cleanup EXIT
 
@@ -49,14 +61,18 @@ export TSS2_TCTI="swtpm:host=localhost,port=2321"
 
 # Initialize TPM
 echo "Initializing TPM..."
-tpm2_startup -c
-tpm2_clear -c p
+if ! tpm2_startup -c; then
+    skip "TSS2 swtpm TCTI not available (install libtss2-tcti-swtpm)"
+fi
+if ! tpm2_clear -c p; then
+    skip "TPM clear failed under swtpm"
+fi
 
 # Setup PAM Service
 echo "Setting up PAM service..."
 # We need absolute path for the module in PAM config
 ABS_MODULE_PATH=$(readlink -f $PAM_MODULE_PATH)
-echo "auth required $ABS_MODULE_PATH" | sudo tee /etc/pam.d/$SERVICE_NAME > /dev/null
+echo "auth required $ABS_MODULE_PATH" | sudo -n tee /etc/pam.d/$SERVICE_NAME > /dev/null
 
 # Test 1: Enroll
 echo "Test 1: Enrollment"

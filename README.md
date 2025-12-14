@@ -78,11 +78,17 @@ You can pass options to the PAM module to customize its behaviour:
 
 *   `max_tries=<N>`: Overrides the default maximum attempts allowed before fallback (default: 5). Note: This is distinct from the hardware-enforced limit set during enrollment.
 *   `base=<hex>`: Specifies the base NV index if a non-default range was used during enrolment.
+*   `unblock_on_success`: If the PIN is locked, return `PAM_IGNORE` during `auth` (allowing other auth modules to succeed). If a login/session is successfully established, the module will run a setuid helper during `session` to reset the TPM failure counter for that user.
+*   `helper=/absolute/path`: Override the path to the unblock helper (default: the installed `tpmpin-unblock-self` under `libexecdir`).
 
 **Example with options**:
 
 ```pam
 auth    sufficient      pam_tpmpin.so max_tries=5 base=0x1000000
+
+# Auto-unblock only after successful non-TPM auth
+auth    optional        pam_tpmpin.so unblock_on_success
+session optional        pam_tpmpin.so unblock_on_success
 ```
 
 **Example `/etc/pam.d/sudo`**:
@@ -107,6 +113,18 @@ If a user exceeds the maximum number of tries, their PIN is locked. To unblock t
 # Syntax: tpmpin unblock <username> [options]
 sudo tpmpin unblock myuser --ask-password
 ```
+
+### Self-unblock helper (setuid)
+
+When installed with the setuid bit, the helper can reset the caller's TPM failure counter without needing admin access:
+
+```bash
+/usr/libexec/tpmpin-unblock-self
+```
+
+This is also what `unblock_on_success` uses (invoked by PAM as root, targeting the authenticated user).
+
+Security note: enabling auto-unblock without re-authentication reduces the effectiveness of lockout as a deterrent. Consider using it only in stacks where another strong factor (password/FIDO/etc.) is required.
 
 ## Security Model
 

@@ -13,12 +13,111 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/types.h>
+#include <sys/wait.h>
 #include <syslog.h>
 #include <tss2/tss2_common.h>
 #include <tss2/tss2_esys.h>
 #include <tss2/tss2_rc.h>
 #include <tss2/tss2_tpm2_types.h>
 #include <unistd.h>
+
+#ifndef TPMPIN_DEFAULT_UNBLOCK_HELPER
+#define TPMPIN_DEFAULT_UNBLOCK_HELPER "/usr/libexec/tpmpin-unblock-self"
+#endif
+
+#define TPMPIN_PAM_DATA_NEEDS_UNBLOCK "tpmpin_needs_unblock"
+
+typedef struct {
+  uint32_t pin_base;
+  uint64_t max_tries;
+  bool unblock_on_success;
+  const char *helper_path;
+} module_options;
+
+static module_options parse_options(int argc, const char **argv) {
+  module_options opts = {
+      .pin_base = NV_PIN_INDEX_BASE,
+      .max_tries = MAX_PIN_FAILURES,
+      .unblock_on_success = false,
+      .helper_path = TPMPIN_DEFAULT_UNBLOCK_HELPER,
+  };
+
+  for (int i = 0; i < argc; ++i) {
+    if (strncmp(argv[i], "base=", 5) == 0) {
+      opts.pin_base = (uint32_t)strtoul(argv[i] + 5, NULL, 0);
+    } else if (strncmp(argv[i], "max_tries=", 10) == 0) {
+      opts.max_tries = (uint64_t)strtoul(argv[i] + 10, NULL, 0);
+    } else if (strcmp(argv[i], "unblock_on_success") == 0) {
+      opts.unblock_on_success = true;
+    } else if (strncmp(argv[i], "helper=", 7) == 0) {
+      opts.helper_path = argv[i] + 7;
+    }
+  }
+  return opts;
+}
+
+static void free_pam_data(pam_handle_t *pamh, void *data, int error_status) {
+  (void)pamh;
+  (void)error_status;
+  free(data);
+}
+
+static int run_unblock_helper(pam_handle_t *pamh, const module_options *opts,
+                              int64_t uid) {
+  if (opts->helper_path == NULL || opts->helper_path[0] != '/') {
+    pam_syslog(pamh, LOG_ERR, "tpmpin: helper path must be absolute");
+    return -1;
+  }
+
+  char uid_arg[32];
+  char base_arg[32];
+  snprintf(uid_arg, sizeof(uid_arg), "%ld", (long)uid);
+  snprintf(base_arg, sizeof(base_arg), "0x%x", opts->pin_base);
+
+  char *const child_argv[] = {
+      (char *)opts->helper_path, (char *)"--uid", uid_arg,
+      (char *)"--base",          base_arg,        NULL,
+  };
+
+  char *const child_envp[] = {
+      (char *)"TSS2_LOG=all+NONE",
+      NULL,
+  };
+
+  pid_t pid = fork();
+  if (pid < 0) {
+    pam_syslog(pamh, LOG_ERR, "tpmpin: fork failed: %m");
+    return -1;
+  }
+
+  if (pid == 0) {
+    execve(opts->helper_path, child_argv, child_envp);
+    _exit(127);
+  }
+
+  int status = 0;
+  if (waitpid(pid, &status, 0) < 0) {
+    pam_syslog(pamh, LOG_ERR, "tpmpin: waitpid failed: %m");
+    return -1;
+  }
+
+  if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
+    return 0;
+  }
+
+  if (WIFEXITED(status)) {
+    pam_syslog(pamh, LOG_ERR, "tpmpin: unblock helper exited %d",
+               WEXITSTATUS(status));
+  } else if (WIFSIGNALED(status)) {
+    pam_syslog(pamh, LOG_ERR, "tpmpin: unblock helper killed by signal %d",
+               WTERMSIG(status));
+  } else {
+    pam_syslog(pamh, LOG_ERR, "tpmpin: unblock helper failed (status=0x%x)",
+               status);
+  }
+  return -1;
+}
 
 static void log_error(pam_handle_t *pamh, const char *fmt, ...) {
   char buf[1024];
@@ -43,6 +142,8 @@ int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
                         const char **argv) {
   setenv("TSS2_LOG", "all+NONE", 0);
 
+  module_options opts = parse_options(argc, argv);
+
   long uid = get_uid(pamh);
   if (uid < 0) {
     return -uid;
@@ -53,22 +154,13 @@ int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
     return PAM_AUTH_ERR;
   }
 
-  uint32_t pin_base = NV_PIN_INDEX_BASE;
-  uint64_t max_tries = MAX_PIN_FAILURES;
-  for (int i = 0; i < argc; ++i) {
-    if (strncmp(argv[i], "base=", 5) == 0) {
-      pin_base = (uint32_t)strtoul(argv[i] + 5, NULL, 0);
-    } else if (strncmp(argv[i], "max_tries=", 10) == 0) {
-      max_tries = (uint64_t)strtoul(argv[i] + 10, NULL, 0);
-    }
-  }
   uint32_t counter_base =
-      pin_base + (NV_COUNTER_INDEX_BASE - NV_PIN_INDEX_BASE);
+      opts.pin_base + (NV_COUNTER_INDEX_BASE - NV_PIN_INDEX_BASE);
 
-  uint32_t pin_index = calculate_nv_index(pin_base, (uint32_t)uid);
+  uint32_t pin_index = calculate_nv_index(opts.pin_base, (uint32_t)uid);
   uint32_t counter_index = calculate_nv_index(counter_base, (uint32_t)uid);
   int verify_res =
-      verify_nv_pin(pamh, pin, pin_index, counter_index, max_tries);
+      verify_nv_pin(pamh, pin, pin_index, counter_index, opts.max_tries);
   explicit_bzero(pin, strlen(pin));
   free(pin);
   if (verify_res == 0) {
@@ -76,6 +168,16 @@ int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
   } else if (verify_res == 1) {
     return PAM_AUTH_ERR;
   } else if (verify_res == 2) {
+    if (opts.unblock_on_success) {
+      bool *flag = calloc(1, sizeof(bool));
+      if (flag != NULL) {
+        *flag = true;
+        (void)pam_set_data(pamh, TPMPIN_PAM_DATA_NEEDS_UNBLOCK, flag,
+                           free_pam_data);
+      }
+      // Let other auth mechanisms succeed; we'll unblock in open_session.
+      return PAM_IGNORE;
+    }
     return PAM_MAXTRIES;
   } else {
     return PAM_SYSTEM_ERR;
@@ -83,6 +185,44 @@ int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
 }
 
 int pam_sm_setcred(pam_handle_t *pamh, int flags, int argc, const char **argv) {
+  return PAM_SUCCESS;
+}
+
+int pam_sm_open_session(pam_handle_t *pamh, int flags, int argc,
+                        const char **argv) {
+  (void)flags;
+  setenv("TSS2_LOG", "all+NONE", 0);
+
+  module_options opts = parse_options(argc, argv);
+  if (!opts.unblock_on_success) {
+    return PAM_SUCCESS;
+  }
+
+  const void *data = NULL;
+  if (pam_get_data(pamh, TPMPIN_PAM_DATA_NEEDS_UNBLOCK, &data) != PAM_SUCCESS ||
+      data == NULL) {
+    return PAM_SUCCESS;
+  }
+
+  int64_t uid = get_uid(pamh);
+  if (uid < 0) {
+    pam_syslog(pamh, LOG_ERR, "tpmpin: could not resolve uid for auto-unblock");
+    return PAM_SUCCESS;
+  }
+
+  (void)run_unblock_helper(pamh, &opts, uid);
+
+  // Clear the flag so we don't re-run.
+  (void)pam_set_data(pamh, TPMPIN_PAM_DATA_NEEDS_UNBLOCK, NULL, NULL);
+  return PAM_SUCCESS;
+}
+
+int pam_sm_close_session(pam_handle_t *pamh, int flags, int argc,
+                         const char **argv) {
+  (void)pamh;
+  (void)flags;
+  (void)argc;
+  (void)argv;
   return PAM_SUCCESS;
 }
 

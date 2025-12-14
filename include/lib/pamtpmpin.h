@@ -28,6 +28,20 @@ int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc,
 int pam_sm_setcred(pam_handle_t *pamh, int flags, int argc, const char **argv);
 
 /**
+ * PAM module open session entry point
+ * Used for optional post-auth work (e.g., auto-unblocking after successful
+ * login)
+ */
+int pam_sm_open_session(pam_handle_t *pamh, int flags, int argc,
+                        const char **argv);
+
+/**
+ * PAM module close session entry point
+ */
+int pam_sm_close_session(pam_handle_t *pamh, int flags, int argc,
+                         const char **argv);
+
+/**
  * Get the UID of the user being authenticated
  * @param pamh The PAM handle
  * @return The UID on success, or negative PAM error code on failure

@@ -24,8 +24,20 @@ libpam_tpmpin = shared_library(
     dependencies: [pam_dep, tpm_dep],
     include_directories: [lib_incdir, common_incdir],
     link_with: libtpmpin_common,
+    c_args: ['-DTPMPIN_DEFAULT_UNBLOCK_HELPER="@0@"'.format(get_option('libexecdir') / 'tpmpin-unblock-self')],
     install: true,
     install_dir: pam_modules_dir
+)
+
+tpmpin_unblock_self = executable(
+    'tpmpin-unblock-self',
+    'src/bin/tpmpin-unblock-self.c',
+    dependencies: [tpm_dep],
+    include_directories: common_incdir,
+    link_with: libtpmpin_common,
+    install: true,
+    install_dir: get_option('libexecdir'),
+    install_mode: 'rwsr-xr-x'
 )
 
 tpmpin_exe = executable(
@@ -47,6 +59,6 @@ pam_test_harness = executable(
 test('integration_test',
     find_program('tests/integration_test.sh'),
     args: [meson.project_build_root()],
-    depends: [pam_test_harness, libpam_tpmpin, tpmpin_exe],
+    depends: [pam_test_harness, libpam_tpmpin, tpmpin_exe, tpmpin_unblock_self],
     timeout: 60
 )
