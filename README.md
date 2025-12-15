@@ -79,16 +79,16 @@ You can pass options to the PAM module to customize its behaviour:
 *   `max_tries=<N>`: Overrides the default maximum attempts allowed before fallback (default: 5). Note: This is distinct from the hardware-enforced limit set during enrollment.
 *   `base=<hex>`: Specifies the base NV index if a non-default range was used during enrolment.
 *   `unblock_on_success`: If the PIN is locked, return `PAM_IGNORE` during `auth` (allowing other auth modules to succeed). If a login/session is successfully established, the module will run a setuid helper during `session` to reset the TPM failure counter for that user.
-*   `helper=/absolute/path`: Override the path to the unblock helper (default: the installed `tpmpin-unblock-self` under `libexecdir`).
+*   `helper=/absolute/path`: Set the path to the unblock helper.
 
 **Example with options**:
 
 ```pam
-auth    sufficient      libpam_tpmpin.so max_tries=5 base=0x1000000 unblock_on_success
+auth    sufficient      libpam_tpmpin.so max_tries=5 base=0x1000000 unblock_on_success helper=/usr/libexec/tpmpin-unblock-self
 
 # Auto-unblock only after successful non-TPM auth
-auth    optional        libpam_tpmpin.so unblock_on_success
-session optional        libpam_tpmpin.so unblock_on_success
+auth    optional        libpam_tpmpin.so unblock_on_success helper=/usr/libexec/tpmpin-unblock-self
+session optional        libpam_tpmpin.so unblock_on_success helper=/usr/libexec/tpmpin-unblock-self
 ```
 
 **Example `/etc/pam.d/sudo`**:
