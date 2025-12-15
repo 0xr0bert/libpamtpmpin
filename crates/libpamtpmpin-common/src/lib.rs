@@ -139,7 +139,7 @@ pub unsafe fn apply_policy_limit(
             ESYS_TR_PASSWORD,
             ESYS_TR_NONE,
             ESYS_TR_NONE,
-            &mut operand as *mut TPM2B_OPERAND,
+            &mut operand,
             0,
             tss_esapi::constants::tss::TPM2_EO_UNSIGNED_LT,
         )
