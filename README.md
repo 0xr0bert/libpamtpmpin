@@ -15,25 +15,44 @@ A PAM module allowing authentication via a PIN backed by a TPM 2.0 device.
 
 ### Prerequisites
 
-*   `cmake`
-*   `gcc` or `clang`
-*   `libpam0g-dev`
-*   `libtss2-dev` (TPM2 TSS ESAPI)
+*   Rust (stable)
+*   `clang` (required for bindgen)
+*   `pkg-config`
+*   `libpam0g-dev` (PAM development headers)
+*   `libtss2-dev` (TPM2 TSS ESAPI development headers)
 
 ### Build and Install
 
 ```bash
-meson setup build
-meson compile -C build
-sudo meson install -C build
+cargo build --release
 ```
 
-By default, the PAM module is installed to `/usr/lib/security` (or `/usr/local/lib/security` depending on prefix). If your distribution uses a different path (like `/lib/security`), you can specify it:
+This will produce the following artifacts in `target/release/`:
 
-```bash
-meson configure build -Dpam_modules_dir=/lib/security
-sudo meson install -C build
-```
+*   `libpam_tpmpin.so`: The PAM module.
+*   `tpmpin`: The administration tool.
+*   `tpmpin-unblock-self`: The setuid helper for auto-unblocking.
+
+#### Manual Installation
+
+1.  **Install the PAM module**:
+    ```bash
+    sudo cp target/release/libpam_tpmpin.so /lib/security/
+    ```
+    *(Note: Adjust the path to `/usr/lib/security` or `/usr/lib64/security` depending on your distribution.)*
+
+2.  **Install the administration tool**:
+    ```bash
+    sudo cp target/release/tpmpin /usr/local/bin/
+    ```
+
+3.  **Install the unblock helper**:
+    ```bash
+    sudo cp target/release/tpmpin-unblock-self /usr/local/libexec/
+    sudo chown root:root /usr/local/libexec/tpmpin-unblock-self
+    sudo chmod u+s /usr/local/libexec/tpmpin-unblock-self
+    ```
+    *(Note: The helper **must** be setuid root to function correctly when called by the PAM module.)*
 
 ### Arch Linux / AUR
 
@@ -84,11 +103,11 @@ You can pass options to the PAM module to customize its behaviour:
 **Example with options**:
 
 ```pam
-auth    sufficient      libpam_tpmpin.so max_tries=5 base=0x1000000 unblock_on_success helper=/usr/libexec/tpmpin-unblock-self
+auth    sufficient      libpam_tpmpin.so max_tries=5 base=0x1000000 unblock_on_success helper=/usr/local/libexec/tpmpin-unblock-self
 
 # Auto-unblock only after successful non-TPM auth
-auth    optional        libpam_tpmpin.so unblock_on_success helper=/usr/libexec/tpmpin-unblock-self
-session optional        libpam_tpmpin.so unblock_on_success helper=/usr/libexec/tpmpin-unblock-self
+auth    optional        libpam_tpmpin.so unblock_on_success helper=/usr/local/libexec/tpmpin-unblock-self
+session optional        libpam_tpmpin.so unblock_on_success helper=/usr/local/libexec/tpmpin-unblock-self
 ```
 
 **Example `/etc/pam.d/sudo`**:
@@ -119,7 +138,7 @@ sudo tpmpin unblock myuser --ask-password
 When installed with the setuid bit, the helper can reset the caller's TPM failure counter without needing admin access:
 
 ```bash
-/usr/libexec/tpmpin-unblock-self
+/usr/local/libexec/tpmpin-unblock-self
 ```
 
 This is also what `unblock_on_success` uses (invoked by PAM as root, targeting the authenticated user).
