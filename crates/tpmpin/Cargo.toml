@@ -1,0 +1,13 @@
+[package]
+name = "tpmpin"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+clap = { version = "4.5.53", features = ["derive"] }
+pamtpmpin-common = { path = "../pamtpmpin-common" }
+nix = { version = "0.30.1", features = ["user"] }
+rpassword = "7.4.0"
+tss-esapi = "7.6.0"
+tss-esapi-sys = "0.5.0"
+zeroize = { version = "1.8.2", features = ["derive"] }

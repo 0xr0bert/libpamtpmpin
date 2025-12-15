@@ -1,10 +1,12 @@
+use std::ffi::c_void;
+use std::ops::{Deref, DerefMut};
 use tss_esapi::{
     constants::tss::{
-        TPM2_ALG_NULL, TPM2_ALG_SHA256, TPM2_EO_UNSIGNED_LT, TPM2_RC_FMT1, TPM2_RC_HANDLE,
-        TPM2_RC_SUCCESS, TPM2_SE_TRIAL,
+        TPM2_ALG_NULL, TPM2_ALG_SHA256, TPM2_EO_UNSIGNED_LT, TPM2_RC_BAD_AUTH, TPM2_RC_FMT1,
+        TPM2_RC_HANDLE, TPM2_RC_POLICY, TPM2_RC_SUCCESS, TPM2_SE_TRIAL,
     },
     tss2_esys::{
-        ESYS_CONTEXT, ESYS_TR, ESYS_TR_NONE, ESYS_TR_PASSWORD, ESYS_TR_RH_OWNER,
+        ESYS_CONTEXT, ESYS_TR, ESYS_TR_NONE, ESYS_TR_PASSWORD, ESYS_TR_RH_OWNER, Esys_Free,
         Esys_NV_DefineSpace, Esys_NV_Read, Esys_NV_Write, Esys_PolicyAuthValue,
         Esys_PolicyGetDigest, Esys_PolicyNV, Esys_StartAuthSession, Esys_TR_Close,
         Esys_TR_FromTPMPublic, Esys_TR_SetAuth, TPM2_HANDLE, TPM2B_AUTH, TPM2B_DIGEST,
@@ -13,6 +15,61 @@ use tss_esapi::{
     },
 };
 use zeroize::Zeroize;
+
+/// A safe wrapper around a pointer allocated by the TSS library.
+///
+/// This struct ensures that the memory is freed using `Esys_Free` when it goes out of scope.
+pub struct EsysPtr<T> {
+    ptr: *mut T,
+}
+
+impl<T> EsysPtr<T> {
+    /// Creates a new `EsysPtr` from a raw pointer.
+    ///
+    /// # Safety
+    ///
+    /// The pointer must have been allocated by the TSS library (e.g., via `Esys_NV_Read` or `Esys_PolicyGetDigest`).
+    /// The caller must ensure that the pointer is valid and that ownership is transferred to this `EsysPtr`.
+    pub unsafe fn new(ptr: *mut T) -> Option<Self> {
+        if ptr.is_null() {
+            None
+        } else {
+            Some(Self { ptr })
+        }
+    }
+
+    /// Returns the underlying raw pointer.
+    pub fn as_ptr(&self) -> *const T {
+        self.ptr
+    }
+
+    /// Returns the underlying mutable raw pointer.
+    pub fn as_mut_ptr(&mut self) -> *mut T {
+        self.ptr
+    }
+}
+
+impl<T> Drop for EsysPtr<T> {
+    fn drop(&mut self) {
+        unsafe {
+            Esys_Free(self.ptr as *mut c_void);
+        }
+    }
+}
+
+impl<T> Deref for EsysPtr<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { &*self.ptr }
+    }
+}
+
+impl<T> DerefMut for EsysPtr<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe { &mut *self.ptr }
+    }
+}
 
 /// Size of counter NV data in bytes (u64)
 pub const COUNTER_NV_DATA_SIZE: u16 = 8;
@@ -28,6 +85,11 @@ pub const TPMA_NV_AUTHREAD: u32 = 0x00040000;
 pub const TPMA_NV_NO_DA: u32 = 0x02000000;
 pub const TPMA_NV_POLICYREAD: u32 = 0x00080000;
 
+pub const NV_PIN_INDEX_BASE: u32 = 0x01500000;
+pub const NV_COUNTER_INDEX_BASE: u32 = 0x01600000;
+
+pub const MAX_PIN_FAILURES: u64 = 5;
+
 pub fn calculate_nv_index(base: u32, uid: u32) -> u32 {
     // FNV-1a 32-bit hash algorithm
     let mut hash: u32 = 2166136261u32;
@@ -35,7 +97,7 @@ pub fn calculate_nv_index(base: u32, uid: u32) -> u32 {
         hash ^= byte as u32;
         hash = hash.wrapping_mul(16777619);
     }
-    base + (hash & NV_INDEX_RANGE)
+    base + (hash % NV_INDEX_RANGE)
 }
 
 pub unsafe fn read_counter_value(
@@ -48,7 +110,7 @@ pub unsafe fn read_counter_value(
             context,
             ESYS_TR_RH_OWNER,
             counter_handle,
-            ESYS_TR_NONE,
+            ESYS_TR_PASSWORD,
             ESYS_TR_NONE,
             ESYS_TR_NONE,
             COUNTER_NV_DATA_SIZE,
@@ -59,7 +121,8 @@ pub unsafe fn read_counter_value(
     if rc != TPM2_RC_SUCCESS {
         Err(rc)
     } else {
-        let buffer = unsafe { (*data).buffer };
+        let data_ptr = unsafe { EsysPtr::new(data) }.ok_or(TPM2_RC_SUCCESS)?;
+        let buffer = data_ptr.buffer;
         let mut bytes = [0u8; COUNTER_NV_DATA_SIZE as usize];
         bytes.copy_from_slice(&buffer[..COUNTER_NV_DATA_SIZE as usize]);
         Ok(u64::from_be_bytes(bytes))
@@ -116,6 +179,15 @@ pub fn increment_counter(
         current_value = max_tries;
     }
     unsafe { write_counter_value(context, counter_handle, current_value) }
+}
+
+pub fn is_bad_auth(rc: TSS2_RC) -> bool {
+    (rc & TPM2_RC_FMT1 != 0) && (rc & 0x3F) == (TPM2_RC_BAD_AUTH & 0x3F)
+}
+
+pub fn is_policy_fail(rc: TSS2_RC) -> bool {
+    // Failed counters have TPM2_RC_POLICY as the low byte
+    (rc & 0xFFF) == TPM2_RC_POLICY
 }
 
 pub unsafe fn apply_policy_limit(
@@ -352,7 +424,7 @@ pub unsafe fn compute_pin_policy_digest(
     context: *mut ESYS_CONTEXT,
     counter_handle: ESYS_TR,
     max_tries: u64,
-) -> Result<Box<TPM2B_DIGEST>, TSS2_RC> {
+) -> Result<EsysPtr<TPM2B_DIGEST>, TSS2_RC> {
     let symmetric: TPMT_SYM_DEF = TPMT_SYM_DEF {
         algorithm: TPM2_ALG_NULL,
         keyBits: TPMU_SYM_KEY_BITS { sym: 0 },
@@ -432,6 +504,6 @@ pub unsafe fn compute_pin_policy_digest(
     if rc != TPM2_RC_SUCCESS || policy_digest.is_null() {
         Err(rc)
     } else {
-        Ok(unsafe { Box::from_raw(policy_digest) })
+        Ok(unsafe { EsysPtr::new(policy_digest).unwrap() })
     }
 }
