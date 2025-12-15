@@ -8,7 +8,7 @@ use pamtpmpin_common::*;
 use serial_test::serial;
 use tss_esapi::constants::tss::{TPM2_ALG_NULL, TPM2_ALG_SHA256, TPM2_RC_SUCCESS, TPM2_SE_POLICY};
 use tss_esapi::tss2_esys::{
-    ESYS_CONTEXT, ESYS_TR_NONE, Esys_Finalize, Esys_Free, Esys_Initialize, Esys_NV_Read,
+    ESYS_CONTEXT, ESYS_TR, ESYS_TR_NONE, Esys_Finalize, Esys_Free, Esys_Initialize, Esys_NV_Read,
     Esys_PolicyAuthValue, Esys_StartAuthSession, Esys_TR_Close, Esys_TR_FromTPMPublic,
     Esys_TR_SetAuth, TPM2B_AUTH, TPM2B_MAX_NV_BUFFER, TPMT_SYM_DEF, TPMU_SYM_KEY_BITS,
     TPMU_SYM_MODE,
@@ -85,43 +85,11 @@ impl Drop for TpmSimulator {
 
 unsafe fn authenticate(
     context: *mut ESYS_CONTEXT,
-    pin_index: u32,
-    counter_index: u32,
+    pin_handle: ESYS_TR,
+    counter_handle: ESYS_TR,
     pin: &str,
     max_tries: u64,
 ) -> Result<(), u32> {
-    let mut pin_handle = ESYS_TR_NONE;
-    let mut counter_handle = ESYS_TR_NONE;
-
-    let rc = unsafe {
-        Esys_TR_FromTPMPublic(
-            context,
-            pin_index,
-            ESYS_TR_NONE,
-            ESYS_TR_NONE,
-            ESYS_TR_NONE,
-            &mut pin_handle,
-        )
-    };
-    if rc != TPM2_RC_SUCCESS {
-        return Err(rc);
-    }
-
-    let rc = unsafe {
-        Esys_TR_FromTPMPublic(
-            context,
-            counter_index,
-            ESYS_TR_NONE,
-            ESYS_TR_NONE,
-            ESYS_TR_NONE,
-            &mut counter_handle,
-        )
-    };
-    if rc != TPM2_RC_SUCCESS {
-        unsafe { Esys_TR_Close(context, &mut pin_handle) };
-        return Err(rc);
-    }
-
     // Start policy session
     let symmetric = TPMT_SYM_DEF {
         algorithm: TPM2_ALG_NULL,
@@ -145,10 +113,6 @@ unsafe fn authenticate(
         )
     };
     if rc != TPM2_RC_SUCCESS {
-        unsafe {
-            Esys_TR_Close(context, &mut pin_handle);
-            Esys_TR_Close(context, &mut counter_handle);
-        }
         return Err(rc);
     }
 
@@ -158,8 +122,6 @@ unsafe fn authenticate(
         // If policy fails here, it means counter >= max_tries (Lockout)
         // Or some other error
         unsafe {
-            Esys_TR_Close(context, &mut pin_handle);
-            Esys_TR_Close(context, &mut counter_handle);
             // Flush session
             tss_esapi::tss2_esys::Esys_FlushContext(context, policy_session);
         }
@@ -178,8 +140,6 @@ unsafe fn authenticate(
     };
     if rc != TPM2_RC_SUCCESS {
         unsafe {
-            Esys_TR_Close(context, &mut pin_handle);
-            Esys_TR_Close(context, &mut counter_handle);
             tss_esapi::tss2_esys::Esys_FlushContext(context, policy_session);
         }
         return Err(rc);
@@ -220,8 +180,6 @@ unsafe fn authenticate(
     }
 
     unsafe {
-        Esys_TR_Close(context, &mut pin_handle);
-        Esys_TR_Close(context, &mut counter_handle);
         tss_esapi::tss2_esys::Esys_FlushContext(context, policy_session);
     }
 
@@ -289,19 +247,32 @@ fn test_enrollment_authentication_lockout() {
         let rc = write_pin_placeholder(context, pin_index);
         assert!(rc.is_ok());
     }
+
+    let mut pin_handle = ESYS_TR_NONE;
+    unsafe {
+        let rc = Esys_TR_FromTPMPublic(
+            context,
+            pin_index,
+            ESYS_TR_NONE,
+            ESYS_TR_NONE,
+            ESYS_TR_NONE,
+            &mut pin_handle,
+        );
+        assert_eq!(rc, TPM2_RC_SUCCESS);
+    }
     println!("Enrollment complete.");
 
     // --- Authentication Success ---
     println!("Testing successful authentication...");
     unsafe {
-        let rc = authenticate(context, pin_index, counter_index, pin, max_tries);
+        let rc = authenticate(context, pin_handle, counter_handle, pin, max_tries);
         assert_eq!(rc, Ok(()), "Authentication with correct PIN failed");
     }
 
     // --- Authentication Failure (Wrong PIN) ---
     println!("Testing wrong PIN...");
     unsafe {
-        let rc = authenticate(context, pin_index, counter_index, "wrong", max_tries);
+        let rc = authenticate(context, pin_handle, counter_handle, "wrong", max_tries);
         assert!(rc.is_err(), "Authentication with wrong PIN should fail");
         assert!(is_bad_auth(rc.unwrap_err()), "Error should be BAD_AUTH");
     }
@@ -316,15 +287,15 @@ fn test_enrollment_authentication_lockout() {
     println!("Testing lockout...");
     // Fail 2 more times (total 3 failures = max_tries)
     unsafe {
-        let _ = authenticate(context, pin_index, counter_index, "wrong", max_tries);
-        let _ = authenticate(context, pin_index, counter_index, "wrong", max_tries);
+        let _ = authenticate(context, pin_handle, counter_handle, "wrong", max_tries);
+        let _ = authenticate(context, pin_handle, counter_handle, "wrong", max_tries);
         let val = read_counter_value(context, counter_handle).unwrap();
         assert_eq!(val, 3, "Counter should be 3 (max_tries)");
     }
 
     // Now try again, should fail with Policy Failure (Lockout)
     unsafe {
-        let rc = authenticate(context, pin_index, counter_index, pin, max_tries); // Even correct PIN fails
+        let rc = authenticate(context, pin_handle, counter_handle, pin, max_tries); // Even correct PIN fails
         assert!(rc.is_err(), "Authentication should fail when locked out");
         let err = rc.unwrap_err();
         assert!(
@@ -343,11 +314,12 @@ fn test_enrollment_authentication_lockout() {
 
     // Auth should work again
     unsafe {
-        let rc = authenticate(context, pin_index, counter_index, pin, max_tries);
+        let rc = authenticate(context, pin_handle, counter_handle, pin, max_tries);
         assert_eq!(rc, Ok(()), "Authentication after unblock failed");
     }
 
     unsafe {
+        Esys_TR_Close(context, &mut pin_handle);
         Esys_TR_Close(context, &mut counter_handle);
         Esys_Finalize(&mut context);
     }
