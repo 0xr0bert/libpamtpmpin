@@ -1,20 +1,19 @@
+use std::path::PathBuf;
 use std::process::{Child, Command};
 use std::thread;
 use std::time::Duration;
 use tempfile::TempDir;
-use std::path::PathBuf;
 
 use pamtpmpin_common::*;
 use serial_test::serial;
-use tss_esapi::constants::tss::{
-    TPM2_ALG_NULL, TPM2_ALG_SHA256, TPM2_RC_SUCCESS, TPM2_SE_POLICY,
-};
+use tss_esapi::constants::tss::{TPM2_ALG_NULL, TPM2_ALG_SHA256, TPM2_RC_SUCCESS, TPM2_SE_POLICY};
 use tss_esapi::tss2_esys::{
-    Esys_Finalize, Esys_Free, Esys_Initialize, Esys_NV_Read, Esys_PolicyAuthValue,
-    Esys_StartAuthSession, Esys_TR_Close, Esys_TR_FromTPMPublic, Esys_TR_SetAuth, ESYS_CONTEXT,
-    ESYS_TR_NONE, TPM2B_AUTH, TPM2B_MAX_NV_BUFFER, TPMT_SYM_DEF, TPMU_SYM_KEY_BITS, TPMU_SYM_MODE,
+    ESYS_CONTEXT, ESYS_TR_NONE, Esys_Finalize, Esys_Free, Esys_Initialize, Esys_NV_Read,
+    Esys_PolicyAuthValue, Esys_StartAuthSession, Esys_TR_Close, Esys_TR_FromTPMPublic,
+    Esys_TR_SetAuth, TPM2B_AUTH, TPM2B_MAX_NV_BUFFER, TPMT_SYM_DEF, TPMU_SYM_KEY_BITS,
+    TPMU_SYM_MODE,
 };
-use tss_esapi_sys::{Tss2_TctiLdr_Initialize, Tss2_TctiLdr_Finalize, TSS2_TCTI_CONTEXT};
+use tss_esapi_sys::{TSS2_TCTI_CONTEXT, Tss2_TctiLdr_Finalize, Tss2_TctiLdr_Initialize};
 
 struct TpmSimulator {
     process: Child,
@@ -25,11 +24,16 @@ struct TpmSimulator {
 impl TpmSimulator {
     fn new() -> Self {
         let temp_dir = tempfile::tempdir().unwrap();
-        
+
         let socket_base = temp_dir.path().join("swtpm-sock");
         let ctrl_sock = PathBuf::from(format!("{}.ctrl", socket_base.display()));
 
-        println!("Starting swtpm: swtpm socket --tpmstate dir={} --ctrl type=unixio,path={} --tpm2 --server type=unixio,path={} --seccomp action=none --flags not-need-init,startup-clear", temp_dir.path().display(), ctrl_sock.display(), socket_base.display());
+        println!(
+            "Starting swtpm: swtpm socket --tpmstate dir={} --ctrl type=unixio,path={} --tpm2 --server type=unixio,path={} --seccomp action=none --flags not-need-init,startup-clear",
+            temp_dir.path().display(),
+            ctrl_sock.display(),
+            socket_base.display()
+        );
 
         // Start swtpm
         let child = Command::new("swtpm")
