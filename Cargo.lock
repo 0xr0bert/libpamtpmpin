@@ -413,7 +413,7 @@ dependencies = [
 
 [[package]]
 name = "pam_tpmpin"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "libc",
  "nix",
@@ -426,7 +426,7 @@ dependencies = [
 
 [[package]]
 name = "pamtpmpin-common"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "serial_test",
  "tempfile",
@@ -749,7 +749,7 @@ dependencies = [
 
 [[package]]
 name = "tpmpin"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "clap",
  "clap-num",
@@ -763,7 +763,7 @@ dependencies = [
 
 [[package]]
 name = "tpmpin-unblock-self"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "clap",
  "clap-num",
