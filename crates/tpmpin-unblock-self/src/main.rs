@@ -1,4 +1,5 @@
 use clap::{Parser, command};
+use clap_num::maybe_hex;
 use nix::{
     libc::{clearenv, geteuid, getuid},
     unistd::{SysconfVar, sysconf},
@@ -116,7 +117,7 @@ fn main() {
 struct Cli {
     #[arg(long)]
     uid: Option<u32>,
-    #[arg(long, default_value_t = NV_PIN_INDEX_BASE)]
+    #[arg(long, default_value_t = NV_PIN_INDEX_BASE, value_parser = maybe_hex::<u32>)]
     base: u32,
 }
 

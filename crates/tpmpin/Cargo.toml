@@ -11,3 +11,4 @@ rpassword = "7.4.0"
 tss-esapi = "7.6.0"
 tss-esapi-sys = "0.5.0"
 zeroize = { version = "1.8.2", features = ["derive"] }
+clap-num = "1.2.0"

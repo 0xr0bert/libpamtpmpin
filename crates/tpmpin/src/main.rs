@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand, command};
+use clap_num::maybe_hex;
 use nix::unistd::User;
 use pamtpmpin_common::{
     MAX_PIN_FAILURES, NV_COUNTER_INDEX_BASE, NV_PIN_INDEX_BASE, calculate_nv_index,
@@ -87,7 +88,7 @@ enum Command {
         username: String,
         #[arg(long)]
         ask_password: bool,
-        #[arg(long, default_value_t = NV_PIN_INDEX_BASE)]
+        #[arg(long, default_value_t = NV_PIN_INDEX_BASE, value_parser = maybe_hex::<u32>)]
         base: u32,
         #[arg(long, default_value_t = MAX_PIN_FAILURES)]
         max_tries: u64,
