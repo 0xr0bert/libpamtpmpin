@@ -1,6 +1,6 @@
 # libpamtpmpin
 
-[![Build](https://github.com/0xr0bert/libpamtpmpin/actions/workflows/build.yml/badge.svg)](https://github.com/0xr0bert/libpamtpmpin/actions/workflows/build.yml)
+[![Build](https://github.com/0xr0bert/libpamtpmpin/actions/workflows/test.yml/badge.svg)](https://github.com/0xr0bert/libpamtpmpin/actions/workflows/test.yml)
 
 A PAM module allowing authentication via a PIN backed by a TPM 2.0 device.
 
